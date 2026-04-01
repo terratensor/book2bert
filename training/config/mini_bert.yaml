@@ -1,0 +1,31 @@
+model:
+  vocab_size: 30000
+  hidden_size: 384
+  num_layers: 6
+  num_heads: 12
+  intermediate_size: 1536
+  max_position: 512
+  dropout: 0.1
+
+training:
+  batch_size: 16
+  learning_rate: 5e-5
+  warmup_steps: 1000
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  num_epochs: 10
+  save_steps: 500
+  logging_steps: 100
+  eval_steps: 500
+  max_seq_length: 512
+  mlm_probability: 0.15
+
+data:
+  train_file: "data/processed/dataset/train/*.jsonl"
+  val_file: "data/processed/dataset/val/*.jsonl"
+  tokenizer_path: "data/processed/tokenizer/"
+
+logging:
+  project: "book2bert"
+  run_name: "mini_bert_50books"
+  log_dir: "logs/"
