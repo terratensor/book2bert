@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Обучение WordPiece токенизатора для BERT.
-Поддерживает переменный размер словаря.
+Обучение токенизатора в streaming режиме.
+Не загружает весь корпус в память.
 """
 
 import os
@@ -11,28 +11,40 @@ from tokenizers import BertWordPieceTokenizer
 from glob import glob
 from tqdm import tqdm
 
-def collect_corpus(data_dir, output_file):
-    """Собирает все предложения из JSONL в один текстовый файл"""
-    print(f"Collecting corpus from {data_dir}...")
+def stream_sentences(sentences_dir):
+    """Генератор, читающий предложения из JSONL файлов по одному."""
+    files = glob(os.path.join(sentences_dir, "*.jsonl"))
     
-    files = glob(os.path.join(data_dir, "*.jsonl"))
-    total_sentences = 0
-    
-    with open(output_file, 'w', encoding='utf-8') as out_f:
-        for filepath in tqdm(files, desc="Processing files"):
-            with open(filepath, 'r', encoding='utf-8') as in_f:
-                for line in in_f:
-                    if line.strip():
-                        data = json.loads(line)
-                        text = data['text']
-                        out_f.write(text + '\n')
-                        total_sentences += 1
-    
-    print(f"Corpus collected: {total_sentences} sentences")
-    return total_sentences
+    for filepath in tqdm(files, desc="Processing files"):
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    data = json.loads(line)
+                    yield data['text'] + '\n'
 
-def train_tokenizer(corpus_file, output_dir, vocab_size=30000):
-    """Обучает WordPiece токенизатор с заданным vocab_size"""
+def train_tokenizer_streaming(sentences_dir, output_dir, vocab_size=30000, min_frequency=2):
+    """
+    Обучает токенизатор в streaming режиме.
+    Сначала записывает корпус во временный файл, затем обучает.
+    """
+    import tempfile
+    
+    print(f"Streaming sentences from {sentences_dir} to temporary file...")
+    
+    # Создаем временный файл
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, suffix='.txt') as tmp_file:
+        tmp_path = tmp_file.name
+        total_sentences = 0
+        
+        for sentence in stream_sentences(sentences_dir):
+            tmp_file.write(sentence)
+            total_sentences += 1
+            if total_sentences % 100000 == 0:
+                print(f"  Written {total_sentences} sentences...")
+    
+    print(f"Corpus collected: {total_sentences} sentences, temp file: {tmp_path}")
+    
+    # Обучаем токенизатор
     print(f"\nTraining tokenizer with vocab_size={vocab_size}...")
     
     tokenizer = BertWordPieceTokenizer(
@@ -44,31 +56,28 @@ def train_tokenizer(corpus_file, output_dir, vocab_size=30000):
     )
     
     tokenizer.train(
-        files=[corpus_file],
-        vocab_size=vocab_size,  # ← теперь используем аргумент
-        min_frequency=2,        # ← снижаем порог, чтобы получить больше слов
+        files=[tmp_path],
+        vocab_size=vocab_size,
+        min_frequency=min_frequency,
         limit_alphabet=1000,
-        special_tokens=[
-            "[PAD]",
-            "[UNK]",
-            "[CLS]",
-            "[SEP]",
-            "[MASK]"
-        ]
+        special_tokens=["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
     )
     
     os.makedirs(output_dir, exist_ok=True)
     tokenizer.save_model(output_dir)
     
-    # Сохраняем конфигурацию
+    # Сохраняем конфиг
     config = {
         "vocab_size": vocab_size,
         "special_tokens": ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
         "model_type": "bert-wordpiece",
-        "min_frequency": 2
+        "min_frequency": min_frequency
     }
     with open(os.path.join(output_dir, "config.json"), 'w') as f:
         json.dump(config, f, indent=2)
+    
+    # Удаляем временный файл
+    os.unlink(tmp_path)
     
     print(f"Tokenizer saved to {output_dir}")
     print(f"Vocabulary size: {len(tokenizer.get_vocab())}")
@@ -77,39 +86,18 @@ def train_tokenizer(corpus_file, output_dir, vocab_size=30000):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--sentences-dir', type=str, default='data/processed/sentences')
-    parser.add_argument('--output-dir', type=str, default='data/processed/tokenizer')
-    parser.add_argument('--vocab-size', type=int, default=50000, help='Vocabulary size')
-    parser.add_argument('--min-frequency', type=int, default=2, help='Minimum frequency for token')
+    parser.add_argument('--sentences-dir', type=str, required=True)
+    parser.add_argument('--output-dir', type=str, required=True)
+    parser.add_argument('--vocab-size', type=int, default=50000)
+    parser.add_argument('--min-frequency', type=int, default=2)
     args = parser.parse_args()
     
-    # 1. Собираем корпус
-    corpus_file = "data/processed/corpus.txt"
-    total = collect_corpus(args.sentences_dir, corpus_file)
-    
-    # 2. Обучаем токенизатор
-    tokenizer = train_tokenizer(corpus_file, args.output_dir, args.vocab_size)
-    
-    # 3. Сохраняем статистику
-    stats = {
-        "total_sentences": total,
-        "vocab_size": len(tokenizer.get_vocab()),
-        "corpus_file": corpus_file,
-        "min_frequency": args.min_frequency
-    }
-    with open(os.path.join(args.output_dir, "stats.json"), 'w') as f:
-        json.dump(stats, f, indent=2)
-    
-    # 4. Проверяем наличие целых слов
-    print("\n=== Проверка словаря ===")
-    test_words = ["учение", "граница", "материя", "философия", "методология", "сознание"]
-    vocab = tokenizer.get_vocab()
-    
-    for word in test_words:
-        if word in vocab:
-            print(f"  ✓ '{word}' найден (id: {vocab[word]})")
-        else:
-            print(f"  ✗ '{word}' отсутствует")
+    tokenizer = train_tokenizer_streaming(
+        args.sentences_dir,
+        args.output_dir,
+        args.vocab_size,
+        args.min_frequency
+    )
     
     print("\n=== Done ===")
 

@@ -47,7 +47,7 @@ def mask_tokens(input_ids, tokenizer, mlm_probability=0.15):
 
 def main():
     # Загружаем новый токенизатор
-    tokenizer = BertWordPieceTokenizer("data/processed/tokenizer/vocab.txt", lowercase=False)
+    tokenizer = BertWordPieceTokenizer("data/processed/tokenizer_militera/vocab.txt", lowercase=False)
     
     print("="*60)
     print("1. Проверка токенизации целых слов")
