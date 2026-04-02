@@ -1,62 +1,52 @@
 #!/usr/bin/env python3
 """
 Обучение WordPiece токенизатора для BERT.
-Использует библиотеку tokenizers от Hugging Face.
+Поддерживает переменный размер словаря.
 """
 
 import os
 import json
+import argparse
 from tokenizers import BertWordPieceTokenizer
-from tokenizers.processors import BertProcessing
 from glob import glob
+from tqdm import tqdm
 
 def collect_corpus(data_dir, output_file):
-    """
-    Собирает все предложения из JSONL файлов в один текстовый файл.
-    """
+    """Собирает все предложения из JSONL в один текстовый файл"""
     print(f"Collecting corpus from {data_dir}...")
     
     files = glob(os.path.join(data_dir, "*.jsonl"))
     total_sentences = 0
     
     with open(output_file, 'w', encoding='utf-8') as out_f:
-        for filepath in files:
+        for filepath in tqdm(files, desc="Processing files"):
             with open(filepath, 'r', encoding='utf-8') as in_f:
                 for line in in_f:
                     if line.strip():
                         data = json.loads(line)
                         text = data['text']
-                        # Записываем каждое предложение на новой строке
                         out_f.write(text + '\n')
                         total_sentences += 1
-                        
-                        # Прогресс
-                        if total_sentences % 10000 == 0:
-                            print(f"  Processed {total_sentences} sentences...")
     
     print(f"Corpus collected: {total_sentences} sentences")
     return total_sentences
 
 def train_tokenizer(corpus_file, output_dir, vocab_size=30000):
-    """
-    Обучает WordPiece токенизатор.
-    """
+    """Обучает WordPiece токенизатор с заданным vocab_size"""
     print(f"\nTraining tokenizer with vocab_size={vocab_size}...")
     
-    # Создаем токенизатор
     tokenizer = BertWordPieceTokenizer(
         clean_text=True,
         handle_chinese_chars=False,
         strip_accents=False,
-        lowercase=False,  # Сохраняем регистр (важно для русского)
+        lowercase=False,
         wordpieces_prefix="##"
     )
     
-    # Обучаем
     tokenizer.train(
         files=[corpus_file],
-        vocab_size=vocab_size,
-        min_frequency=5,
+        vocab_size=vocab_size,  # ← теперь используем аргумент
+        min_frequency=2,        # ← снижаем порог, чтобы получить больше слов
         limit_alphabet=1000,
         special_tokens=[
             "[PAD]",
@@ -67,7 +57,6 @@ def train_tokenizer(corpus_file, output_dir, vocab_size=30000):
         ]
     )
     
-    # Сохраняем
     os.makedirs(output_dir, exist_ok=True)
     tokenizer.save_model(output_dir)
     
@@ -75,58 +64,54 @@ def train_tokenizer(corpus_file, output_dir, vocab_size=30000):
     config = {
         "vocab_size": vocab_size,
         "special_tokens": ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
-        "model_type": "bert-wordpiece"
+        "model_type": "bert-wordpiece",
+        "min_frequency": 2
     }
     with open(os.path.join(output_dir, "config.json"), 'w') as f:
         json.dump(config, f, indent=2)
     
     print(f"Tokenizer saved to {output_dir}")
-    
-    # Выводим статистику
-    vocab = tokenizer.get_vocab()
-    print(f"\nVocabulary size: {len(vocab)}")
-    
-    # Примеры токенизации
-    print("\n=== Tokenization examples ===")
-    test_texts = [
-        "Философия есть учение о всеобщем.",
-        "Мера — это границы, в которых объект сохраняет устойчивость.",
-        "Триединство: материя, информация и мера."
-    ]
-    
-    for text in test_texts:
-        encoded = tokenizer.encode(text)
-        tokens = encoded.tokens
-        print(f"\nText: {text}")
-        print(f"Tokens ({len(tokens)}): {tokens[:20]}...")
-        print(f"Token IDs: {encoded.ids[:20]}...")
+    print(f"Vocabulary size: {len(tokenizer.get_vocab())}")
     
     return tokenizer
 
 def main():
-    # Пути
-    sentences_dir = "data/processed/sentences"
-    corpus_file = "data/processed/corpus.txt"
-    tokenizer_dir = "data/processed/tokenizer"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--sentences-dir', type=str, default='data/processed/sentences')
+    parser.add_argument('--output-dir', type=str, default='data/processed/tokenizer')
+    parser.add_argument('--vocab-size', type=int, default=50000, help='Vocabulary size')
+    parser.add_argument('--min-frequency', type=int, default=2, help='Minimum frequency for token')
+    args = parser.parse_args()
     
     # 1. Собираем корпус
-    total = collect_corpus(sentences_dir, corpus_file)
+    corpus_file = "data/processed/corpus.txt"
+    total = collect_corpus(args.sentences_dir, corpus_file)
     
     # 2. Обучаем токенизатор
-    tokenizer = train_tokenizer(corpus_file, tokenizer_dir, vocab_size=30000)
+    tokenizer = train_tokenizer(corpus_file, args.output_dir, args.vocab_size)
     
     # 3. Сохраняем статистику
     stats = {
         "total_sentences": total,
         "vocab_size": len(tokenizer.get_vocab()),
-        "corpus_file": corpus_file
+        "corpus_file": corpus_file,
+        "min_frequency": args.min_frequency
     }
-    with open(os.path.join(tokenizer_dir, "stats.json"), 'w') as f:
+    with open(os.path.join(args.output_dir, "stats.json"), 'w') as f:
         json.dump(stats, f, indent=2)
     
+    # 4. Проверяем наличие целых слов
+    print("\n=== Проверка словаря ===")
+    test_words = ["учение", "граница", "материя", "философия", "методология", "сознание"]
+    vocab = tokenizer.get_vocab()
+    
+    for word in test_words:
+        if word in vocab:
+            print(f"  ✓ '{word}' найден (id: {vocab[word]})")
+        else:
+            print(f"  ✗ '{word}' отсутствует")
+    
     print("\n=== Done ===")
-    print(f"Tokenizer ready at {tokenizer_dir}")
-    print(f"Corpus file: {corpus_file}")
 
 if __name__ == "__main__":
     main()
