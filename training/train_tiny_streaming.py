@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Обучение BERT-tiny с JSONL (streaming).
-Полная версия с правильным возобновлением.
+Полная версия с правильным возобновлением и ВСЕМИ метриками.
 """
 
 import os
@@ -112,15 +112,18 @@ class TrainingLogger:
         with open(self.log_dir / 'training_history.json', 'w') as f:
             json.dump(self.history, f, indent=2)
         
+        # Эпохальные метрики для TensorBoard
         self.writer.add_scalar('epoch/train_loss', train_loss, epoch)
         self.writer.add_scalar('epoch/val_loss', val_loss, epoch)
         self.writer.add_scalar('epoch/val_perplexity', val_perplexity, epoch)
+        self.writer.add_scalar('epoch/learning_rate', lr, epoch)
         
         with open(self.log_path, 'a') as f:
             f.write(f"\n{'='*60}\nEpoch {epoch}\n")
             f.write(f"  Train loss: {train_loss:.6f}\n")
             f.write(f"  Val loss: {val_loss:.6f}\n")
             f.write(f"  Val perplexity: {val_perplexity:.2f}\n")
+            f.write(f"  Learning rate: {lr:.2e}\n")
             f.write(f"  Time: {elapsed_time:.1f}s\n{'='*60}\n")
     
     def close(self):
@@ -148,7 +151,6 @@ def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokeniz
     total_loss = 0
     steps_in_epoch = start_step
     
-    # Пропускаем уже обработанные шаги
     data_iter = iter(dataloader)
     if start_step > 0:
         data_iter = itertools.islice(data_iter, start_step, None)
@@ -205,6 +207,12 @@ def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokeniz
                 print(f"\n  ✓ Checkpoint saved at step {global_step}")
     
     avg_loss = total_loss / (steps_in_epoch - start_step) if steps_in_epoch > start_step else 0
+    
+    # Добавляем эпохальные метрики обучения
+    current_lr = scheduler.get_last_lr()[0]
+    logger.writer.add_scalar('epoch/learning_rate', current_lr, epoch)
+    logger.writer.add_scalar('epoch/train_loss', avg_loss, epoch)
+    
     return avg_loss, global_step, steps_in_epoch
 
 
@@ -229,7 +237,11 @@ def eval_epoch(model, dataloader, device, tokenizer, mlm_probability, max_batche
             batch_count += 1
             if batch_count >= max_batches:
                 break
-    return total_loss / batch_count
+    avg_loss = total_loss / batch_count
+    
+    # Добавляем эпохальные метрики валидации
+    # Они будут вызваны из main после получения val_loss
+    return avg_loss
 
 
 def main():
@@ -321,6 +333,11 @@ def main():
         val_loss = eval_epoch(model, val_loader, device, tokenizer,
                               config['data']['mlm_probability'], args.max_val_batches)
         
+        # Добавляем эпохальные метрики валидации
+        val_perplexity = torch.exp(torch.tensor(val_loss)).item()
+        logger.writer.add_scalar('epoch/val_loss', val_loss, epoch)
+        logger.writer.add_scalar('epoch/val_perplexity', val_perplexity, epoch)
+        
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             save_checkpoint(output_dir / 'best_model.pt', epoch, global_step, steps_completed,
@@ -336,6 +353,8 @@ def main():
         print(f"\nEpoch {epoch + 1} summary:")
         print(f"  Train loss: {train_loss:.4f}")
         print(f"  Val loss:   {val_loss:.4f}")
+        print(f"  Val perplexity: {val_perplexity:.2f}")
+        print(f"  Learning rate: {scheduler.get_last_lr()[0]:.2e}")
         print(f"  Best val loss: {best_val_loss:.4f}")
         print(f"  Time: {(datetime.now() - epoch_start).total_seconds():.1f}s")
     
