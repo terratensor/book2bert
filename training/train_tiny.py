@@ -45,8 +45,8 @@ def collate_fn(batch):
 
 class SimpleTokenizer:
     """Простой токенизатор для маскирования"""
-    def __init__(self, vocab_size=30000):
-        self.vocab_size = vocab_size
+    def __init__(self, vocab_size):
+        self.vocab_size = vocab_size  # ← должно быть из config['model']['vocab_size']
         self.cls_token_id = 2
         self.sep_token_id = 3
         self.pad_token_id = 0

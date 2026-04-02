@@ -35,24 +35,27 @@ go run cmd/process-books/main.go \
 
 ### 1.3 Обучение токенизатора (пробный запуск — НЕВЕРНЫЙ)
 ```bash
-python scripts/train_tokenizer.py --vocab_size 30000
+python scripts/train_tokenizer.py --vocab_size 50000
 ```
 **Проблема:** В словаре нет целых слов (учение, граница, материя) — только субворды.
 
 ### 1.4 Корректное обучение токенизатора
 ```bash
-python scripts/train_tokenizer.py --vocab_size 50000
+python scripts/train_tokenizer.py --vocab_size 50000 --min-frequency 2
 ```
 **Ожидание:** Словарь содержит целые слова.
 
 ### 1.5 Проверка словаря
 ```bash
-head -100 data/processed/tokenizer/vocab.txt | grep -E "^(учение|граница|материя|философия)$"
+head -10000 data/processed/tokenizer/vocab.txt | grep -E "^(учение|граница|материя|философия)$"
 ```
 **Ожидание:** Найдены все слова.
 
 ### 1.6 Создание датасета
 ```bash
+# Удаляем старый датасет
+rm -rf data/processed/dataset
+# Создаем новый
 python scripts/build_dataset.py \
     --sentences-dir data/processed/sentences \
     --tokenizer-path data/processed/tokenizer \

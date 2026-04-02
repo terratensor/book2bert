@@ -1,7 +1,7 @@
 name: tiny_bert
 
 model:
-  vocab_size: 30000
+  vocab_size: 50000
   hidden_size: 384
   num_layers: 6
   num_heads: 12
