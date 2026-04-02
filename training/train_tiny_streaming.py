@@ -243,6 +243,14 @@ def eval_epoch(model, dataloader, device, tokenizer, mlm_probability, max_batche
     # Они будут вызваны из main после получения val_loss
     return avg_loss
 
+def count_examples(dataset_path, split):
+    """Быстрый подсчет примеров в JSONL файлах"""
+    data_dir = Path(dataset_path) / split
+    total = 0
+    for filepath in data_dir.glob("*.jsonl"):
+        with open(filepath, 'r') as f:
+            total += sum(1 for _ in f)
+    return total
 
 def main():
     parser = argparse.ArgumentParser()
@@ -279,6 +287,29 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=config['training']['batch_size'],
                             collate_fn=collate_fn, num_workers=0, pin_memory=True)
     
+
+    # ========== ПОДСЧЕТ ПРИМЕРОВ И РАСЧЕТ total_steps ==========
+    print("\nCounting training examples...")
+    train_examples = 0
+    for filepath in Path(args.dataset_path).glob("train/*.jsonl"):
+        with open(filepath, 'r') as f:
+            train_examples += sum(1 for _ in f)
+    
+    print("Counting validation examples...")
+    val_examples = 0
+    for filepath in Path(args.dataset_path).glob("val/*.jsonl"):
+        with open(filepath, 'r') as f:
+            val_examples += sum(1 for _ in f)
+    
+    print(f"Train: {train_examples:,}, Val: {val_examples:,}")
+    
+    batch_size = config['training']['batch_size']
+    steps_per_epoch = train_examples // batch_size
+    total_steps = steps_per_epoch * config['training']['num_epochs']
+    print(f"Steps/epoch: {steps_per_epoch:,}, Total steps: {total_steps:,}")
+    # ============================================================
+
+
     bert = BERT(**config['model'])
     model = BERTForMLM(bert, config['model']['vocab_size'])
     model.to(device)
@@ -286,8 +317,14 @@ def main():
     
     optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'],
                             weight_decay=config['training']['weight_decay'])
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config['training']['learning_rate'],
-                                               total_steps=config['training']['num_epochs'] * 10000, pct_start=0.1)
+    
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=config['training']['learning_rate'],
+        total_steps=total_steps,
+        pct_start=0.1
+    )
+    
     scaler = GradScaler('cuda')
     tokenizer = SimpleTokenizer(config['model']['vocab_size'])
     
