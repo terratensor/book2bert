@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Обучение BERT-tiny с streaming загрузкой JSONL.
-Правильное возобновление: сохраняем epoch, step, total_steps_in_epoch.
+Обучение BERT-tiny с JSONL (streaming).
+Полная версия с правильным возобновлением.
 """
 
 import os
@@ -12,6 +12,7 @@ import json
 import csv
 from pathlib import Path
 from datetime import datetime
+import itertools
 
 import torch
 import torch.nn as nn
@@ -25,21 +26,16 @@ from model import BERT, BERTForMLM, count_parameters
 
 
 class StreamingJSONLDataset(IterableDataset):
-    def __init__(self, data_dir: str, split: str, max_examples: int = None):
+    def __init__(self, data_dir: str, split: str):
         self.data_dir = Path(data_dir) / split
         self.files = sorted(self.data_dir.glob("*.jsonl"))
-        self.max_examples = max_examples
-        
+
     def __iter__(self):
-        count = 0
         for filepath in self.files:
             with open(filepath, 'r', encoding='utf-8') as f:
                 for line in f:
                     if line.strip():
                         yield json.loads(line)
-                        count += 1
-                        if self.max_examples and count >= self.max_examples:
-                            return
 
 
 def collate_fn(batch):
@@ -61,26 +57,17 @@ class SimpleTokenizer:
 def mask_tokens(input_ids, tokenizer, mlm_probability=0.15):
     labels = input_ids.clone()
     device = input_ids.device
-    
-    special_tokens = torch.tensor(
-        [tokenizer.cls_token_id, tokenizer.sep_token_id, tokenizer.pad_token_id],
-        device=device
-    )
-    
+    special_tokens = torch.tensor([tokenizer.cls_token_id, tokenizer.sep_token_id, tokenizer.pad_token_id], device=device)
     special_tokens_mask = torch.isin(input_ids, special_tokens)
     probability_matrix = torch.full(labels.shape, mlm_probability, device=device)
-    probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-    
+    probability_matrix.masked_fill_(special_tokens_mask, 0.0)
     masked_indices = torch.bernoulli(probability_matrix).bool()
     labels[~masked_indices] = -100
-    
     indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8, device=device)).bool() & masked_indices
     input_ids[indices_replaced] = tokenizer.mask_token_id
-    
     indices_random = torch.bernoulli(torch.full(labels.shape, 0.5, device=device)).bool() & masked_indices & ~indices_replaced
     random_words = torch.randint(tokenizer.vocab_size, labels.shape, dtype=torch.long, device=device)
     input_ids[indices_random] = random_words[indices_random]
-    
     return input_ids, labels
 
 
@@ -90,34 +77,38 @@ class TrainingLogger:
         (log_dir / 'csv').mkdir(parents=True, exist_ok=True)
         (log_dir / 'checkpoints').mkdir(parents=True, exist_ok=True)
         
-        self.step_csv_path = log_dir / 'csv' / 'step_metrics.csv'
-        self.epoch_csv_path = log_dir / 'csv' / 'epoch_metrics.csv'
+        self.step_csv = log_dir / 'csv' / 'step_metrics.csv'
+        self.epoch_csv = log_dir / 'csv' / 'epoch_metrics.csv'
         
-        with open(self.step_csv_path, 'w', newline='') as f:
-            csv.writer(f).writerow(['step', 'epoch', 'step_in_epoch', 'loss', 'learning_rate', 'grad_norm'])
-        with open(self.epoch_csv_path, 'w', newline='') as f:
-            csv.writer(f).writerow(['epoch', 'train_loss', 'val_loss', 'val_perplexity', 'learning_rate', 'best_val_loss', 'time_seconds'])
+        if not self.step_csv.exists():
+            with open(self.step_csv, 'w') as f:
+                csv.writer(f).writerow(['global_step', 'epoch', 'step_in_epoch', 'loss', 'learning_rate', 'grad_norm'])
+        
+        if not self.epoch_csv.exists():
+            with open(self.epoch_csv, 'w') as f:
+                csv.writer(f).writerow(['epoch', 'train_loss', 'val_loss', 'val_perplexity', 'learning_rate', 'best_val_loss', 'time_seconds'])
         
         self.writer = SummaryWriter(log_dir / 'tensorboard')
         self.log_path = log_dir / 'training.log'
         self.history = {'config': config, 'steps': [], 'epochs': []}
     
-    def log_step(self, global_step: int, epoch: int, step_in_epoch: int, loss: float, lr: float, grad_norm: float):
-        with open(self.step_csv_path, 'a', newline='') as f:
+    def log_step(self, global_step, epoch, step_in_epoch, loss, lr, grad_norm):
+        with open(self.step_csv, 'a') as f:
             csv.writer(f).writerow([global_step, epoch, step_in_epoch, loss, lr, grad_norm])
         self.writer.add_scalar('train/step_loss', loss, global_step)
         self.writer.add_scalar('train/learning_rate', lr, global_step)
         self.writer.add_scalar('train/grad_norm', grad_norm, global_step)
     
-    def log_epoch(self, epoch: int, train_loss: float, val_loss: float, 
-                  learning_rate: float, best_val_loss: float, elapsed_time: float):
+    def log_epoch(self, epoch, train_loss, val_loss, lr, best_val_loss, elapsed_time):
         val_perplexity = torch.exp(torch.tensor(val_loss)).item()
-        with open(self.epoch_csv_path, 'a', newline='') as f:
-            csv.writer(f).writerow([epoch, train_loss, val_loss, val_perplexity, learning_rate, best_val_loss, elapsed_time])
+        with open(self.epoch_csv, 'a') as f:
+            csv.writer(f).writerow([epoch, train_loss, val_loss, val_perplexity, lr, best_val_loss, elapsed_time])
         
-        self.history['epochs'].append({'epoch': epoch, 'train_loss': train_loss, 'val_loss': val_loss,
-                                       'val_perplexity': val_perplexity, 'learning_rate': learning_rate,
-                                       'best_val_loss': best_val_loss, 'time_seconds': elapsed_time})
+        self.history['epochs'].append({
+            'epoch': epoch, 'train_loss': train_loss, 'val_loss': val_loss,
+            'val_perplexity': val_perplexity, 'learning_rate': lr,
+            'best_val_loss': best_val_loss, 'time_seconds': elapsed_time
+        })
         with open(self.log_dir / 'training_history.json', 'w') as f:
             json.dump(self.history, f, indent=2)
         
@@ -126,15 +117,18 @@ class TrainingLogger:
         self.writer.add_scalar('epoch/val_perplexity', val_perplexity, epoch)
         
         with open(self.log_path, 'a') as f:
-            f.write(f"\n{'='*60}\nEpoch {epoch}\n  Train loss: {train_loss:.6f}\n  Val loss: {val_loss:.6f}\n")
-            f.write(f"  Val perplexity: {val_perplexity:.2f}\n  Time: {elapsed_time:.1f}s\n{'='*60}\n")
+            f.write(f"\n{'='*60}\nEpoch {epoch}\n")
+            f.write(f"  Train loss: {train_loss:.6f}\n")
+            f.write(f"  Val loss: {val_loss:.6f}\n")
+            f.write(f"  Val perplexity: {val_perplexity:.2f}\n")
+            f.write(f"  Time: {elapsed_time:.1f}s\n{'='*60}\n")
     
     def close(self):
         self.writer.close()
 
 
 def save_checkpoint(path, epoch, global_step, step_in_epoch, model, optimizer, scheduler, scaler, best_val_loss, config):
-    checkpoint = {
+    torch.save({
         'epoch': epoch,
         'global_step': global_step,
         'step_in_epoch': step_in_epoch,
@@ -144,27 +138,24 @@ def save_checkpoint(path, epoch, global_step, step_in_epoch, model, optimizer, s
         'scaler_state_dict': scaler.state_dict(),
         'best_val_loss': best_val_loss if best_val_loss != float('inf') else None,
         'config': config
-    }
-    torch.save(checkpoint, path)
+    }, path)
 
 
 def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokenizer,
-                mlm_probability, grad_accum_steps, epoch, start_step, global_step, logger, 
+                mlm_probability, grad_accum_steps, epoch, start_step, global_step, logger,
                 output_dir, config, best_val_loss, checkpoint_freq=10000, last_checkpoint_freq=1000):
     model.train()
     total_loss = 0
     steps_in_epoch = start_step
-    progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/Training", initial=start_step)
     
-    # Пропускаем уже обработанные шаги при возобновлении
+    # Пропускаем уже обработанные шаги
     data_iter = iter(dataloader)
-    for _ in range(start_step):
-        try:
-            next(data_iter)
-        except StopIteration:
-            break
+    if start_step > 0:
+        data_iter = itertools.islice(data_iter, start_step, None)
     
-    for step, batch in enumerate(data_iter, start=start_step):
+    progress_bar = tqdm(data_iter, desc=f"Epoch {epoch+1}/Training", initial=start_step)
+    
+    for step, batch in enumerate(progress_bar, start=start_step):
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         token_type_ids = batch['token_type_ids'].to(device)
@@ -172,8 +163,12 @@ def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokeniz
         masked_input_ids, labels = mask_tokens(input_ids.clone(), tokenizer, mlm_probability)
         
         with autocast('cuda'):
-            outputs = model(input_ids=masked_input_ids, attention_mask=attention_mask,
-                           token_type_ids=token_type_ids, labels=labels)
+            outputs = model(
+                input_ids=masked_input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                labels=labels
+            )
             loss = outputs['loss'] / grad_accum_steps
         
         scaler.scale(loss).backward()
@@ -194,15 +189,12 @@ def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokeniz
             current_lr = scheduler.get_last_lr()[0]
             logger.log_step(global_step, epoch + 1, steps_in_epoch, step_loss, current_lr, grad_norm)
             progress_bar.set_postfix({'loss': f'{step_loss:.4f}', 'lr': f'{current_lr:.2e}'})
-            progress_bar.update(1)
             
-            # Last checkpoint (часто)
             if global_step % last_checkpoint_freq == 0:
                 save_checkpoint(output_dir / 'checkpoints' / 'last_checkpoint.pt',
                                epoch, global_step, steps_in_epoch, model, optimizer, scheduler, scaler,
                                best_val_loss, config)
             
-            # Полный чекпоинт (редко)
             if global_step % checkpoint_freq == 0:
                 cp_path = output_dir / 'checkpoints' / f'checkpoint_step_{global_step}.pt'
                 save_checkpoint(cp_path, epoch, global_step, steps_in_epoch, model, optimizer, scheduler, scaler,
@@ -227,8 +219,12 @@ def eval_epoch(model, dataloader, device, tokenizer, mlm_probability, max_batche
             token_type_ids = batch['token_type_ids'].to(device)
             masked_input_ids, labels = mask_tokens(input_ids.clone(), tokenizer, mlm_probability)
             with autocast('cuda'):
-                outputs = model(input_ids=masked_input_ids, attention_mask=attention_mask,
-                               token_type_ids=token_type_ids, labels=labels)
+                outputs = model(
+                    input_ids=masked_input_ids,
+                    attention_mask=attention_mask,
+                    token_type_ids=token_type_ids,
+                    labels=labels
+                )
             total_loss += outputs['loss'].item()
             batch_count += 1
             if batch_count >= max_batches:
@@ -240,7 +236,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, required=True)
     parser.add_argument('--dataset_path', type=str, required=True)
-    parser.add_argument('--output_dir', type=str, default='data/models')
+    parser.add_argument('--output_dir', type=str, required=True)
     parser.add_argument('--resume_from', type=str, default=None)
     parser.add_argument('--checkpoint_every', type=int, default=10000)
     parser.add_argument('--last_checkpoint_every', type=int, default=1000)
@@ -250,8 +246,7 @@ def main():
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(args.output_dir) / f"{config.get('name', 'tiny_bert_streaming')}_{timestamp}"
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     with open(output_dir / "config.yaml", 'w') as f:
@@ -328,13 +323,11 @@ def main():
         
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_path = output_dir / 'best_model.pt'
-            save_checkpoint(best_path, epoch, global_step, steps_completed,
+            save_checkpoint(output_dir / 'best_model.pt', epoch, global_step, steps_completed,
                            model, optimizer, scheduler, scaler, best_val_loss, config)
-            print(f"  ✓ Best model (val_loss: {val_loss:.4f})")
+            print(f"  ✓ Saved best model (val_loss: {val_loss:.4f})")
         
-        save_checkpoint(output_dir / 'checkpoints' / f'epoch_{epoch+1}.pt', 
-                       epoch, global_step, steps_completed,
+        save_checkpoint(output_dir / 'checkpoints' / f'epoch_{epoch+1}.pt', epoch, global_step, steps_completed,
                        model, optimizer, scheduler, scaler, best_val_loss, config)
         
         logger.log_epoch(epoch + 1, train_loss, val_loss, scheduler.get_last_lr()[0],
