@@ -53,7 +53,7 @@ def predict_masked(model, tokenizer, text, mask_token="[MASK]", device="cuda"):
     predictions = []
     for pos in mask_positions:
         pos_logits = logits[0, pos, :]
-        top_k = torch.topk(pos_logits, 5)
+        top_k = torch.topk(pos_logits, 40)
         
         tokens = []
         for idx in top_k.indices:
