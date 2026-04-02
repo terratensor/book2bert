@@ -324,7 +324,7 @@ def main():
         total_steps=total_steps,
         pct_start=0.1
     )
-    
+
     scaler = GradScaler('cuda')
     tokenizer = SimpleTokenizer(config['model']['vocab_size'])
     
@@ -338,7 +338,6 @@ def main():
         chk = torch.load(args.resume_from, map_location=device)
         model.load_state_dict(chk['model_state_dict'])
         optimizer.load_state_dict(chk['optimizer_state_dict'])
-        scheduler.load_state_dict(chk['scheduler_state_dict'])
         scaler.load_state_dict(chk['scaler_state_dict'])
         start_epoch = chk['epoch']
         start_step = chk.get('step_in_epoch', 0)
@@ -346,7 +345,23 @@ def main():
         best_val_loss = chk.get('best_val_loss')
         if best_val_loss is None:
             best_val_loss = float('inf')
+        
+        # Создаем НОВЫЙ scheduler с правильным total_steps (не из чекпоинта)
+        batch_size = config['training']['batch_size']
+        steps_per_epoch = train_examples // batch_size
+        total_steps = steps_per_epoch * config['training']['num_epochs']
+        scheduler = optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=config['training']['learning_rate'],
+            total_steps=total_steps,
+            pct_start=0.1
+        )
+        # Продвигаем scheduler на количество уже сделанных шагов
+        for _ in range(global_step):
+            scheduler.step()
+        
         print(f"Resumed: epoch {start_epoch}, step_in_epoch {start_step}, global_step {global_step}, best_val_loss {best_val_loss:.4f}")
+        print(f"Recreated scheduler: total_steps={total_steps}, advanced to step {global_step}")
     
     print(f"\nTraining for {config['training']['num_epochs']} epochs")
     print(f"Full checkpoint every {args.checkpoint_every} steps")
