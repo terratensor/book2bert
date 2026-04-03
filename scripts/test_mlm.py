@@ -12,61 +12,74 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "training"))
 from model import BERT, BERTForMLM
 from tokenizers import BertWordPieceTokenizer
 
-def is_english(text):
-    """Проверяет, является ли текст английским"""
-    english_chars = sum(1 for c in text if ord('a') <= ord(c) <= ord('z') or ord('A') <= ord(c) <= ord('Z'))
-    total_chars = sum(1 for c in text if c.isalpha())
-    if total_chars == 0:
-        return False
-    return english_chars / total_chars > 0.7
 
 def load_real_examples(sentences_dir, num_examples=10):
-    """Загружает реальные предложения из militera корпуса (только русские)"""
+    """Загружает реальные предложения из militera корпуса"""
     files = list(Path(sentences_dir).glob("*.jsonl"))
     random.shuffle(files)
     examples = []
     
-    for filepath in files[:10]:  # берем первые 10 файлов
+    for filepath in files[:20]:
         with open(filepath, 'r') as f:
             lines = f.readlines()
             random.shuffle(lines)
-            for line in lines[:5]:  # из каждого файла 5 строк
+            for line in lines[:10]:
                 data = json.loads(line)
                 text = data['text']
-                # Проверяем: русский текст, не слишком короткий, не слишком длинный
-                if (not is_english(text) and 
-                    len(text.split()) > 8 and 
-                    len(text) < 300 and
-                    any('а' <= c <= 'я' or 'А' <= c <= 'Я' for c in text)):
+                if 20 < len(text) < 300:
                     examples.append(text)
                 if len(examples) >= num_examples:
                     return examples[:num_examples]
     
     return examples[:num_examples]
 
+
 def create_masked_example(text):
-    """Маскирует одно случайное знаменательное слово"""
+    """Маскирует одно случайное слово"""
     words = text.split()
     if len(words) < 4:
         return text, None
     
-    # Стоп-слова (не маскируем)
-    stop_words = {}
-    
-    # Находим позиции знаменательных слов
-    content_positions = []
-    for i, w in enumerate(words):
-        w_clean = w.strip('.,!?;:()[]«»"\'')
-        if len(w_clean) > 2 and w_clean.lower() not in stop_words and w_clean[0].isalpha():
-            content_positions.append(i)
-    
-    if not content_positions:
+    # Находим позиции для маскирования (любые слова, кроме совсем коротких)
+    candidates = [i for i, w in enumerate(words) if len(w.strip('.,!?;:()[]«»"\'`')) > 1]
+    if not candidates:
         return text, None
     
-    pos = random.choice(content_positions)
-    original_word = words[pos]
+    pos = random.choice(candidates)
+    original_word = words[pos].strip('.,!?;:()[]«»"\'`')
     words[pos] = "[MASK]"
     return ' '.join(words), original_word
+
+
+def get_top_predictions(logits, tokenizer, top_k=10):
+    """Получает топ предсказаний, очищая от пунктуации"""
+    top_k_values, top_k_indices = torch.topk(logits, top_k * 3)
+    tokens = []
+    seen = set()
+    
+    for idx in top_k_indices:
+        token = tokenizer.id_to_token(idx.item())
+        
+        # Пропускаем специальные токены
+        if token in ['[CLS]', '[SEP]', '[PAD]', '[UNK]', '[MASK]']:
+            continue
+        
+        # Пропускаем пунктуацию
+        if token in ['.', ',', ':', ';', '!', '?', '—', '-', '«', '»', '(', ')', '[', ']', '"', "'", '``', "''", '…']:
+            continue
+        
+        # Очищаем от остаточной пунктуации
+        clean_token = token.strip('.,!?;:()[]«»"\'`…')
+        
+        if clean_token and len(clean_token) > 0 and clean_token not in seen:
+            seen.add(clean_token)
+            tokens.append(clean_token)
+            
+            if len(tokens) >= top_k:
+                break
+    
+    return tokens
+
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -115,10 +128,11 @@ def main():
         masked_text, original_word = create_masked_example(original)
         if masked_text is None or original_word is None:
             continue
-            
-        print(f"Original: {original[:120]}...")
+        
+        print(f"Original: {original[:100]}...")
         print(f"Masked:   {masked_text}")
         
+        # Токенизация
         encoded = tokenizer.encode(masked_text)
         input_ids = torch.tensor([encoded.ids]).to(device)
         
@@ -134,19 +148,21 @@ def main():
             outputs = model(input_ids=input_ids)
             logits = outputs['logits']
         
-        for pos in mask_positions:
-            pos_logits = logits[0, pos, :]
-            top_k = torch.topk(pos_logits, 10)
-            
-            tokens = []
-            for idx in top_k.indices:
-                token = tokenizer.id_to_token(idx.item())
-                # Фильтруем мусор
-                if token not in ['.', ',', ':', ';', '!', '?', '—', '-', '«', '»', '(', ')', 
-                                 '[', ']', '"', "'", '[CLS]', '[SEP]', '[PAD]', '[UNK]', '``', "''"]:
-                    tokens.append(token)
-            
-            print(f"  Masked word: '{original_word}' → Predictions: {tokens[:8]}")
+        # Берем первую маску
+        pos = mask_positions[0]
+        pos_logits = logits[0, pos, :]
+        predictions = get_top_predictions(pos_logits, tokenizer, top_k=10)
+        
+        # Проверяем, угадало ли исходное слово
+        original_clean = original_word.lower()
+        predicted_clean = [p.lower() for p in predictions]
+        
+        if original_clean in predicted_clean:
+            match_marker = "✓"
+        else:
+            match_marker = "✗"
+        
+        print(f"  Masked word: '{original_word}' {match_marker} → Predictions: {predictions[:8]}")
         print()
 
 if __name__ == "__main__":
