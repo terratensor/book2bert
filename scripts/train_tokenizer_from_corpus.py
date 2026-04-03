@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 Обучение токенизатора из готового корпус-файла.
+Сохраняет config.json и stats.json.
 """
 
 import argparse
-from tokenizers import BertWordPieceTokenizer
+import json
 from pathlib import Path
+from tokenizers import BertWordPieceTokenizer
 
 def main():
     parser = argparse.ArgumentParser()
@@ -33,8 +35,28 @@ def main():
         special_tokens=["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
     )
     
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    tokenizer.save_model(args.output_dir)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tokenizer.save_model(str(output_dir))
+    
+    # Сохраняем config.json
+    config = {
+        "vocab_size": args.vocab_size,
+        "min_frequency": args.min_frequency,
+        "special_tokens": ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
+        "model_type": "bert-wordpiece"
+    }
+    with open(output_dir / "config.json", "w") as f:
+        json.dump(config, f, indent=2)
+    
+    # Сохраняем stats.json
+    stats = {
+        "vocab_size": len(tokenizer.get_vocab()),
+        "corpus_file": args.corpus,
+        "min_frequency": args.min_frequency
+    }
+    with open(output_dir / "stats.json", "w") as f:
+        json.dump(stats, f, indent=2)
     
     print(f"Tokenizer saved to {args.output_dir}")
     print(f"Vocabulary size: {len(tokenizer.get_vocab())}")

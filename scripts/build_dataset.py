@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
 Построение датасета в streaming режиме.
-Исправленная версия:
-- Точная токенизация каждого предложения
-- Группировка с учетом [SEP] между предложениями
-- Гарантированное отсутствие обрезания
+ТОЧНАЯ группировка через токенизатор (медленно, но гарантированно правильно).
 """
 
 import os
@@ -12,13 +9,10 @@ import json
 import argparse
 from pathlib import Path
 from tokenizers import BertWordPieceTokenizer
-from filter_utils import filter_cjk_thai
 from tqdm import tqdm
 import random
 
-
 def stream_sentences_by_book(sentences_dir):
-    """Генератор, читающий предложения по книгам."""
     files = list(Path(sentences_dir).glob("*.jsonl"))
     random.shuffle(files)
     
@@ -31,7 +25,6 @@ def stream_sentences_by_book(sentences_dir):
                 if line.strip():
                     data = json.loads(line)
                     text = data["text"]
-                    text = filter_cjk_thai(text)  # ← фильтруем
                     if not text.strip():
                         continue
                     sentences.append({
@@ -43,53 +36,43 @@ def stream_sentences_by_book(sentences_dir):
         sentences.sort(key=lambda x: x["position"])
         yield book_id, sentences
 
-def tokenize_sentences(tokenizer, sentences):
-    """Токенизирует каждое предложение точно."""
-    tokenized = []
-    for s in sentences:
-        encoded = tokenizer.encode(s["text"])
-        tokenized.append({
-            "tokens": encoded.ids,
-            "length": len(encoded.ids),
-            "text": s["text"],
-            "genre": s["genre"]
-        })
-    return tokenized
-
-def group_sentences_exact(tokenized_sentences, max_length=512):
+def group_sentences_exact(sentences, tokenizer, max_length=512):
     """
-    Группирует токенизированные предложения с учетом [SEP] между ними.
-    Возвращает группы исходных текстов.
+    Точная группировка. Для каждой проверки вызывает tokenizer.encode().
+    Гарантирует, что группа не превысит max_length.
     """
     groups = []
-    current_group_texts = []
-    # [CLS] в начале и финальный [SEP] в конце
-    current_tokens = 2
+    current_group = []
     
-    for ts in tokenized_sentences:
-        # +1 за [SEP] между предложениями (кроме последнего в группе)
-        needed = ts["length"] + 1
+    for s in sentences:
+        text = s["text"]
+        # Пробуем добавить предложение
+        test_group = current_group + [text]
+        test_text = " [SEP] ".join(test_group)
+        encoded = tokenizer.encode(test_text)
         
-        if current_tokens + needed > max_length and current_group_texts:
-            groups.append(current_group_texts)
-            current_group_texts = [ts["text"]]
-            current_tokens = 2 + ts["length"] + 1
+        if len(encoded.ids) <= max_length:
+            # Влезает
+            current_group = test_group
         else:
-            current_group_texts.append(ts["text"])
-            current_tokens += ts["length"] + 1
+            # Не влезает — сохраняем текущую группу (без этого предложения)
+            if current_group:
+                groups.append(current_group)
+            # Начинаем новую группу с этого предложения
+            current_group = [text]
     
-    if current_group_texts:
-        groups.append(current_group_texts)
+    if current_group:
+        groups.append(current_group)
     
     return groups
 
 def encode_group(tokenizer, group_texts, max_length=512):
-    """Кодирует группу с [SEP] между предложениями."""
+    """Кодирует группу текстов с [SEP] между ними."""
     text = " [SEP] ".join(group_texts)
     encoded = tokenizer.encode(text)
     tokens = encoded.ids
     
-    # Это не должно происходить, если group_sentences_exact работает правильно
+    # Это не должно происходить, но оставляем защиту
     if len(tokens) > max_length:
         print(f"WARNING: Group exceeded {max_length} tokens ({len(tokens)}), truncating!")
         tokens = tokens[:max_length]
@@ -97,7 +80,6 @@ def encode_group(tokenizer, group_texts, max_length=512):
     input_ids = tokens
     attention_mask = [1] * len(input_ids)
     
-    # Паддинг
     padding_length = max_length - len(input_ids)
     if padding_length > 0:
         input_ids.extend([tokenizer.token_to_id("[PAD]")] * padding_length)
@@ -110,11 +92,9 @@ def encode_group(tokenizer, group_texts, max_length=512):
     }
 
 def save_examples(output_dir, split, examples):
-    """Сохраняет примеры в JSONL файл."""
     output_dir = Path(output_dir) / split
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Используем несколько файлов для параллельной записи
     file_idx = random.randint(0, 99)
     output_file = output_dir / f"part_{file_idx:04d}.jsonl"
     
@@ -130,36 +110,26 @@ def main():
     parser.add_argument('--max-length', type=int, default=512)
     parser.add_argument('--val-split', type=float, default=0.05)
     parser.add_argument('--max-books', type=int, default=None)
-    parser.add_argument('--use-nsp', action='store_true', help='Включить NSP (пока не реализовано)')
     args = parser.parse_args()
     
-    # Загружаем токенизатор
     tokenizer = BertWordPieceTokenizer(
         str(Path(args.tokenizer_path) / "vocab.txt"),
         lowercase=False
     )
     print(f"Tokenizer loaded, vocab_size={tokenizer.get_vocab_size()}")
     
-    # Создаем выходную директорию
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    if args.use_nsp:
-        print("WARNING: NSP not yet implemented. Use without --use-nsp for now.")
     
     train_count = 0
     val_count = 0
     
     for book_id, sentences in tqdm(stream_sentences_by_book(args.sentences_dir), desc="Processing books"):
-        # Определяем split по хешу book_id
         is_val = (hash(book_id) % 100) < (args.val_split * 100)
         split = "val" if is_val else "train"
         
-        # Точная токенизация
-        tokenized = tokenize_sentences(tokenizer, sentences)
-        
-        # Точная группировка
-        groups = group_sentences_exact(tokenized, args.max_length)
+        # Точная группировка через токенизатор
+        groups = group_sentences_exact(sentences, tokenizer, args.max_length)
         
         examples = []
         for group_texts in groups:
@@ -178,7 +148,7 @@ def main():
         if (train_count + val_count) % 10000 == 0:
             print(f"  Progress: train={train_count}, val={val_count}")
         
-        if args.max_books and (train_count + val_count) >= args.max_books:
+        if args.max_books and len(sentences) >= args.max_books:
             break
     
     print(f"\n=== Done ===")
