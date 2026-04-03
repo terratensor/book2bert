@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 Построение датасета в streaming режиме.
-Не загружает все предложения в память.
+Исправленная версия:
+- Нет двойного [CLS] и [SEP]
+- NSP не используется (можно включить параметром)
 """
 
 import os
@@ -13,12 +15,9 @@ from tqdm import tqdm
 import random
 
 def stream_sentences_by_book(sentences_dir):
-    """
-    Генератор, читающий предложения по книгам.
-    Возвращает (book_id, [sentences])
-    """
+    """Генератор, читающий предложения по книгам."""
     files = list(Path(sentences_dir).glob("*.jsonl"))
-    random.shuffle(files)  # Для случайного порядка
+    random.shuffle(files)
     
     for filepath in files:
         book_id = filepath.stem
@@ -34,21 +33,23 @@ def stream_sentences_by_book(sentences_dir):
                         "position": data.get("position", 0)
                     })
         
-        # Сортируем по позиции
         sentences.sort(key=lambda x: x["position"])
         yield book_id, sentences
 
 def encode_group(tokenizer, sentences, max_length=512):
-    """Кодирует группу предложений в пример для BERT."""
+    """
+    Кодирует группу предложений в пример для BERT.
+    НЕ добавляет лишние [CLS] и [SEP] — токенизатор делает это сам.
+    """
     text = " ".join(sentences)
     encoded = tokenizer.encode(text)
-    tokens = encoded.ids
+    tokens = encoded.ids  # уже содержат [CLS] в начале и [SEP] в конце
     
-    # Обрезаем
-    if len(tokens) > max_length - 2:
-        tokens = tokens[:max_length - 2]
+    # Обрезаем до max_length
+    if len(tokens) > max_length:
+        tokens = tokens[:max_length]
     
-    input_ids = [tokenizer.token_to_id("[CLS]")] + tokens + [tokenizer.token_to_id("[SEP]")]
+    input_ids = tokens
     attention_mask = [1] * len(input_ids)
     
     # Паддинг
@@ -60,7 +61,7 @@ def encode_group(tokenizer, sentences, max_length=512):
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
-        "token_type_ids": [0] * max_length
+        "token_type_ids": [0] * max_length  # NSP не используется
     }
 
 def group_sentences(sentences, max_tokens=512):
@@ -106,7 +107,8 @@ def main():
     parser.add_argument('--output-dir', type=str, required=True)
     parser.add_argument('--max-length', type=int, default=512)
     parser.add_argument('--val-split', type=float, default=0.05)
-    parser.add_argument('--max-books', type=int, default=None, help='Ограничить количество книг (для теста)')
+    parser.add_argument('--max-books', type=int, default=None)
+    parser.add_argument('--use-nsp', action='store_true', help='Включить NSP (пока не реализовано)')
     args = parser.parse_args()
     
     # Загружаем токенизатор
@@ -120,7 +122,9 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Обрабатываем книги по одной
+    if args.use_nsp:
+        print("WARNING: NSP not yet implemented. Use without --use-nsp for now.")
+    
     train_count = 0
     val_count = 0
     
