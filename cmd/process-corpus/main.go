@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -120,7 +121,7 @@ func readTXTFile(filePath string) (string, error) {
 }
 
 // processFile обрабатывает один файл
-func processFile(ctx context.Context, task FileTask, seg segmenter.Segmenter, repo book.Repository, stats *ProcessStats) {
+func processFile(ctx context.Context, task FileTask, seg segmenter.Segmenter, repo book.Repository, stats *ProcessStats, cjkLogFile *os.File) {
 	defer atomic.AddInt64(&stats.Processed, 1)
 
 	// Определяем тип файла и читаем содержимое
@@ -146,21 +147,30 @@ func processFile(ctx context.Context, task FileTask, seg segmenter.Segmenter, re
 	}
 	text = textutils.NormalizeText(text)
 
-	// Фильтруем CJK и тайские символы
-	text = textutils.FilterCJKThai(text)
-
-	// Пропускаем пустые файлы
-	if len(strings.TrimSpace(text)) == 0 {
-		log.Printf("[SKIP] %s: empty file after filtering", task.Filename)
-		atomic.AddInt64(&stats.Skipped, 1)
-		return
-	}
-
-	// Извлекаем метаданные из имени файла
+	// Извлекаем метаданные из имени файла (сначала!)
 	genre, author, title := parseMetadataFromFilename(task.Filename)
 	if title == "" {
 		title = strings.TrimSuffix(task.Filename, ".txt.gz")
 		title = strings.TrimSuffix(title, ".txt")
+	}
+
+	// Проверяем наличие CJK/тайских символов ДО фильтрации
+	hadCJK := textutils.HasCJKThai(text)
+
+	// Фильтруем CJK и тайские символы
+	text = textutils.FilterCJKThai(text)
+
+	// Если были CJK символы — логируем (теперь метаданные уже есть)
+	if hadCJK {
+		cjkLogFile.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\n",
+			task.Filename, title, author, genre))
+	}
+
+	// Пропускаем пустые файлы
+	if len(strings.TrimSpace(text)) == 0 {
+		log.Printf("[SKIP] %s: empty after filtering (had CJK: %v)", task.Filename, hadCJK)
+		atomic.AddInt64(&stats.Skipped, 1)
+		return
 	}
 
 	// Создаем книгу
@@ -185,7 +195,7 @@ func processFile(ctx context.Context, task FileTask, seg segmenter.Segmenter, re
 	sentenceCount := strings.Count(text, ".") + strings.Count(text, "!") + strings.Count(text, "?")
 	atomic.AddInt64(&stats.Sentences, int64(sentenceCount))
 
-	log.Printf("[OK] %s | genre=%s author=%s sentences=%d", task.Filename, genre, author, sentenceCount)
+	log.Printf("[OK] %s | genre=%s author=%s sentences=%d | CJK: %v", task.Filename, genre, author, sentenceCount, hadCJK)
 }
 
 // collectFiles собирает все файлы с нужными расширениями
@@ -229,12 +239,26 @@ func main() {
 		extList[i] = strings.TrimSpace(ext)
 	}
 
-	log.Printf("=== Corpus Processor ===")
+	log.Printf("=== Corpus Processor v3 (with CJK filtering) ===")
 	log.Printf("Corpus dir: %s", *corpusDir)
 	log.Printf("Output dir: %s", *outputDir)
 	log.Printf("Segmenter URL: %s", *segmenterURL)
 	log.Printf("Workers: %d", *workers)
 	log.Printf("Extensions: %v", extList)
+
+	// Создаем CJK лог файл
+	cjkLogPath := filepath.Join(*outputDir, "cjk_filtered.log")
+	if err := os.MkdirAll(*outputDir, 0755); err != nil {
+		log.Fatalf("create output dir: %v", err)
+	}
+	cjkLogFile, err := os.Create(cjkLogPath)
+	if err != nil {
+		log.Fatalf("create CJK log: %v", err)
+	}
+	defer cjkLogFile.Close()
+
+	// Заголовок CSV для CJK лога
+	cjkLogFile.WriteString("filename\ttitle\tauthor\tgenre\n")
 
 	// Собираем файлы
 	log.Printf("Collecting files...")
@@ -281,7 +305,7 @@ func main() {
 				case <-ctx.Done():
 					return
 				default:
-					processFile(ctx, task, seg, repo, &stats)
+					processFile(ctx, task, seg, repo, &stats, cjkLogFile)
 				}
 			}
 			log.Printf("[Worker %d] finished", workerID)
@@ -304,5 +328,6 @@ func main() {
 	log.Printf("Errors: %d", stats.Errors)
 	log.Printf("Skipped: %d", stats.Skipped)
 	log.Printf("Total sentences (approx): %d", stats.Sentences)
+	log.Printf("CJK log saved to: %s", cjkLogPath)
 	log.Println("Done!")
 }

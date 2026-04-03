@@ -49,3 +49,13 @@ func FilterCJKThai(s string) string {
 	}
 	return string(result)
 }
+
+// HasCJKThai проверяет, содержит ли строка CJK или тайские символы
+func HasCJKThai(s string) bool {
+	for _, r := range s {
+		if IsCJK(r) || IsThai(r) {
+			return true
+		}
+	}
+	return false
+}
