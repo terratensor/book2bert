@@ -37,13 +37,11 @@ def stream_sentences_by_book(sentences_dir):
         yield book_id, sentences
 
 def encode_group(tokenizer, sentences, max_length=512):
-    """
-    Кодирует группу предложений в пример для BERT.
-    НЕ добавляет лишние [CLS] и [SEP] — токенизатор делает это сам.
-    """
-    text = " ".join(sentences)
+    """Кодирует группу предложений с [SEP] между ними."""
+    # Вставляем [SEP] между предложениями
+    text = " [SEP] ".join(sentences)
     encoded = tokenizer.encode(text)
-    tokens = encoded.ids  # уже содержат [CLS] в начале и [SEP] в конце
+    tokens = encoded.ids
     
     # Обрезаем до max_length
     if len(tokens) > max_length:
@@ -61,7 +59,7 @@ def encode_group(tokenizer, sentences, max_length=512):
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
-        "token_type_ids": [0] * max_length  # NSP не используется
+        "token_type_ids": [0] * max_length  # NSP пока не используем
     }
 
 def group_sentences(sentences, max_tokens=512):
