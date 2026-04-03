@@ -146,9 +146,12 @@ func processFile(ctx context.Context, task FileTask, seg segmenter.Segmenter, re
 	}
 	text = textutils.NormalizeText(text)
 
+	// Фильтруем CJK и тайские символы
+	text = textutils.FilterCJKThai(text)
+
 	// Пропускаем пустые файлы
 	if len(strings.TrimSpace(text)) == 0 {
-		log.Printf("[SKIP] %s: empty file", task.Filename)
+		log.Printf("[SKIP] %s: empty file after filtering", task.Filename)
 		atomic.AddInt64(&stats.Skipped, 1)
 		return
 	}

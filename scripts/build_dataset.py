@@ -12,8 +12,10 @@ import json
 import argparse
 from pathlib import Path
 from tokenizers import BertWordPieceTokenizer
+from filter_utils import filter_cjk_thai
 from tqdm import tqdm
 import random
+
 
 def stream_sentences_by_book(sentences_dir):
     """Генератор, читающий предложения по книгам."""
@@ -28,8 +30,12 @@ def stream_sentences_by_book(sentences_dir):
             for line in f:
                 if line.strip():
                     data = json.loads(line)
+                    text = data["text"]
+                    text = filter_cjk_thai(text)  # ← фильтруем
+                    if not text.strip():
+                        continue
                     sentences.append({
-                        "text": data["text"],
+                        "text": text,
                         "genre": data.get("genre", "Unknown"),
                         "position": data.get("position", 0)
                     })

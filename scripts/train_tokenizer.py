@@ -5,22 +5,30 @@
 """
 
 import os
+import sys
 import json
 import argparse
 from tokenizers import BertWordPieceTokenizer
 from glob import glob
 from tqdm import tqdm
+from pathlib import Path
+
+
+# Добавляем путь к scripts для импорта filter_utils
+sys.path.insert(0, str(Path(__file__).parent))
+from filter_utils import filter_cjk_thai
 
 def stream_sentences(sentences_dir):
-    """Генератор, читающий предложения из JSONL файлов по одному."""
     files = glob(os.path.join(sentences_dir, "*.jsonl"))
-    
     for filepath in tqdm(files, desc="Processing files"):
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.strip():
                     data = json.loads(line)
-                    yield data['text'] + '\n'
+                    text = data['text']
+                    text = filter_cjk_thai(text)  # ← фильтруем
+                    if text.strip():
+                        yield text + '\n'
 
 def train_tokenizer_streaming(sentences_dir, output_dir, vocab_size=30000, min_frequency=2):
     """
