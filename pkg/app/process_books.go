@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/terratensor/book2bert/pkg/core/book"
@@ -23,7 +24,7 @@ func NewProcessBooksUseCase(seg segmenter.Segmenter, repo book.Repository) *Proc
 	}
 }
 
-// Process обрабатывает книгу: сегментирует текст и сохраняет предложения
+// Process обрабатывает книгу: сегментирует текст, разбивает по \n, сохраняет
 func (uc *ProcessBooksUseCase) Process(ctx context.Context, b *book.Book) error {
 	// 1. Сохраняем метаданные книги
 	if err := uc.repo.SaveBook(ctx, b); err != nil {
@@ -36,9 +37,21 @@ func (uc *ProcessBooksUseCase) Process(ctx context.Context, b *book.Book) error 
 		return fmt.Errorf("segment text: %w", err)
 	}
 
-	// 3. Преобразуем в доменные объекты
-	bookSentences := make([]book.Sentence, len(sentences))
-	for i, text := range sentences {
+	// 3. Разбиваем каждое предложение по \n
+	var allSentences []string
+	for _, s := range sentences {
+		lines := strings.Split(s, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				allSentences = append(allSentences, line)
+			}
+		}
+	}
+
+	// 4. Преобразуем в доменные объекты
+	bookSentences := make([]book.Sentence, len(allSentences))
+	for i, text := range allSentences {
 		bookSentences[i] = book.Sentence{
 			BookID:    b.ID,
 			Title:     b.Title,
@@ -50,7 +63,7 @@ func (uc *ProcessBooksUseCase) Process(ctx context.Context, b *book.Book) error 
 		}
 	}
 
-	// 4. Сохраняем предложения
+	// 5. Сохраняем предложения
 	if err := uc.repo.SaveSentences(ctx, bookSentences); err != nil {
 		return fmt.Errorf("save sentences: %w", err)
 	}

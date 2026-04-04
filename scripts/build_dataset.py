@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 Построение датасета в streaming режиме.
-ТОЧНАЯ группировка через токенизатор (медленно, но гарантированно правильно).
+Оптимизированная версия:
+- Токенизация каждого предложения ОДИН раз
+- Группировка без повторной токенизации
+- Разбивка по \n на этапе загрузки
 """
 
 import os
@@ -13,6 +16,7 @@ from tqdm import tqdm
 import random
 
 def stream_sentences_by_book(sentences_dir):
+    """Генератор, читающий предложения по книгам."""
     files = list(Path(sentences_dir).glob("*.jsonl"))
     random.shuffle(files)
     
@@ -36,48 +40,83 @@ def stream_sentences_by_book(sentences_dir):
         sentences.sort(key=lambda x: x["position"])
         yield book_id, sentences
 
-def group_sentences_exact(sentences, tokenizer, max_length=512):
+def tokenize_sentences_batch(tokenizer, sentences, batch_size=1000):
     """
-    Точная группировка. Для каждой проверки вызывает tokenizer.encode().
-    Гарантирует, что группа не превысит max_length.
+    Токенизирует предложения батчами (быстрее, чем по одному).
+    Возвращает список словарей с ключами 'ids', 'text', 'genre'.
+    """
+    tokenized = []
+    
+    for i in range(0, len(sentences), batch_size):
+        batch = sentences[i:i+batch_size]
+        texts = [s["text"] for s in batch]
+        
+        # Батчевая токенизация (один вызов C++ кода)
+        encoded_batch = tokenizer.encode_batch(texts)
+        
+        for j, encoded in enumerate(encoded_batch):
+            tokenized.append({
+                "ids": encoded.ids,
+                "length": len(encoded.ids),
+                "text": batch[j]["text"],
+                "genre": batch[j]["genre"]
+            })
+    
+    return tokenized
+
+def group_sentences_exact(tokenized_sentences, max_length=512):
+    """
+    Группирует ТОКЕНИЗИРОВАННЫЕ предложения (без вызова токенизатора!).
+    Использует заранее посчитанные длины токенов.
     """
     groups = []
     current_group = []
+    # [CLS] в начале + финальный [SEP] в конце = 2 токена
+    current_tokens = 2
     
-    for s in sentences:
-        text = s["text"]
-        # Пробуем добавить предложение
-        test_group = current_group + [text]
-        test_text = " [SEP] ".join(test_group)
-        encoded = tokenizer.encode(test_text)
+    for ts in tokenized_sentences:
+        # +1 для [SEP] после предложения
+        needed = ts["length"] + 1
         
-        if len(encoded.ids) <= max_length:
-            # Влезает
-            current_group = test_group
+        if current_tokens + needed > max_length and current_group:
+            groups.append(current_group)
+            current_group = [ts]
+            current_tokens = 2 + ts["length"] + 1
         else:
-            # Не влезает — сохраняем текущую группу (без этого предложения)
-            if current_group:
-                groups.append(current_group)
-            # Начинаем новую группу с этого предложения
-            current_group = [text]
+            current_group.append(ts)
+            current_tokens += needed
     
     if current_group:
         groups.append(current_group)
     
     return groups
 
-def encode_group(tokenizer, group_texts, max_length=512):
-    """Кодирует группу текстов с [SEP] между ними."""
-    text = " [SEP] ".join(group_texts)
-    encoded = tokenizer.encode(text)
-    tokens = encoded.ids
+def encode_group(tokenizer, group, max_length=512):
+    """
+    Кодирует группу ТОКЕНИЗИРОВАННЫХ предложений.
+    Склеивает ID с [SEP] между ними.
+    """
+    # Собираем ID всех предложений, вставляя [SEP] между ними
+    sep_id = tokenizer.token_to_id("[SEP]")
+    all_ids = []
     
-    # Это не должно происходить, но оставляем защиту
-    if len(tokens) > max_length:
-        print(f"WARNING: Group exceeded {max_length} tokens ({len(tokens)}), truncating!")
-        tokens = tokens[:max_length]
+    for i, ts in enumerate(group):
+        if i > 0:
+            all_ids.append(sep_id)
+        all_ids.extend(ts["ids"])
     
-    input_ids = tokens
+    # Добавляем финальный [SEP]
+    all_ids.append(sep_id)
+    
+    # [CLS] в начало
+    cls_id = tokenizer.token_to_id("[CLS]")
+    input_ids = [cls_id] + all_ids
+    
+    # Обрезаем (защита, хотя не должно происходить)
+    if len(input_ids) > max_length:
+        print(f"WARNING: Group exceeded {max_length} tokens ({len(input_ids)}), truncating!")
+        input_ids = input_ids[:max_length]
+    
     attention_mask = [1] * len(input_ids)
     
     padding_length = max_length - len(input_ids)
@@ -92,6 +131,7 @@ def encode_group(tokenizer, group_texts, max_length=512):
     }
 
 def save_examples(output_dir, split, examples):
+    """Сохраняет примеры в JSONL файл."""
     output_dir = Path(output_dir) / split
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -110,6 +150,7 @@ def main():
     parser.add_argument('--max-length', type=int, default=512)
     parser.add_argument('--val-split', type=float, default=0.05)
     parser.add_argument('--max-books', type=int, default=None)
+    parser.add_argument('--batch-size', type=int, default=1000, help='Размер батча для токенизации')
     args = parser.parse_args()
     
     tokenizer = BertWordPieceTokenizer(
@@ -117,6 +158,7 @@ def main():
         lowercase=False
     )
     print(f"Tokenizer loaded, vocab_size={tokenizer.get_vocab_size()}")
+    print(f"Batch size: {args.batch_size}")
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -128,16 +170,21 @@ def main():
         is_val = (hash(book_id) % 100) < (args.val_split * 100)
         split = "val" if is_val else "train"
         
-        # Точная группировка через токенизатор
-        groups = group_sentences_exact(sentences, tokenizer, args.max_length)
+        # 1. Токенизируем все предложения книги (один раз, батчами)
+        tokenized = tokenize_sentences_batch(tokenizer, sentences, args.batch_size)
         
+        # 2. Группируем по токенам (без вызова токенизатора)
+        groups = group_sentences_exact(tokenized, args.max_length)
+        
+        # 3. Кодируем группы
         examples = []
-        for group_texts in groups:
-            encoded = encode_group(tokenizer, group_texts, args.max_length)
+        for group in groups:
+            encoded = encode_group(tokenizer, group, args.max_length)
             encoded["book_id"] = book_id
             encoded["genre"] = sentences[0]["genre"] if sentences else "Unknown"
             examples.append(encoded)
         
+        # 4. Сохраняем
         save_examples(args.output_dir, split, examples)
         
         if split == "train":
@@ -148,7 +195,7 @@ def main():
         if (train_count + val_count) % 10000 == 0:
             print(f"  Progress: train={train_count}, val={val_count}")
         
-        if args.max_books and len(sentences) >= args.max_books:
+        if args.max_books and (train_count + val_count) >= args.max_books:
             break
     
     print(f"\n=== Done ===")
