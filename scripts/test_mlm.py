@@ -86,9 +86,9 @@ def main():
     print(f"Using device: {device}")
     
     # Пути
-    model_path = "data/models/tiny_bert_militera_v2/best_model.pt"
-    tokenizer_path = "data/processed/tokenizer_militera"
-    sentences_dir = "data/processed/sentences_militera"
+    model_path = "data/models/tiny_bert_militera_v3/best_model.pt"
+    tokenizer_path = "data/processed/tokenizer_militera_v3"
+    sentences_dir = "data/processed/sentences_militera_v3"
     
     # Загружаем токенизатор
     tokenizer = BertWordPieceTokenizer(
