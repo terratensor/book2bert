@@ -242,7 +242,7 @@ def full_mode(model, tokenizer, device, num_samples=10):
         for filepath in files:
             with open(filepath, 'r', encoding='utf-8') as f:
                 for i, line in enumerate(f):
-                    if i >= 200:  # Ограничиваем
+                    if i >= 500:  # Увеличиваем до 500 строк на файл
                         break
                     if line.strip():
                         data = json.loads(line)
@@ -260,38 +260,50 @@ def full_mode(model, tokenizer, device, num_samples=10):
     # Собираем многотокенные слова
     multitoken_words = []
     for text in texts:
+        # Находим все слова в тексте
         words = re.findall(r'[А-Яа-яЁё]+', text)
         for word in words:
             is_multi, tokens = is_multitoken_word(tokenizer, word)
-            if is_multi and word not in [mw['word'] for mw in multitoken_words]:
-                multitoken_words.append({
-                    'word': word,
-                    'tokens': tokens,
-                    'text': text
-                })
+            if is_multi:
+                # Проверяем, что слово действительно есть в тексте как отдельное слово
+                if word in text:
+                    multitoken_words.append({
+                        'word': word,
+                        'tokens': tokens,
+                        'text': text
+                    })
     
-    print(f"Found {len(multitoken_words)} unique multitoken words")
+    # Убираем дубликаты
+    unique_words = {}
+    for item in multitoken_words:
+        if item['word'] not in unique_words:
+            unique_words[item['word']] = item
     
-    if not multitoken_words:
+    print(f"Found {len(unique_words)} unique multitoken words")
+    
+    if not unique_words:
         print("No multitoken words found, testing single token words as fallback")
         # Fallback: тестируем обычные слова
-        for text in texts:
+        for text in texts[:5]:
             words = re.findall(r'[А-Яа-яЁё]+', text)
             for word in words[:num_samples]:
                 result = test_single_word(model, tokenizer, text, word, device)
-                if result.get('success') is not False:
+                if 'error' not in result:
                     print_detailed_result(result)
         return
     
     # Случайная выборка
-    sample = random.sample(multitoken_words, min(num_samples, len(multitoken_words)))
+    sample = random.sample(list(unique_words.values()), min(num_samples, len(unique_words)))
     
     results = []
     for item in sample:
+        print(f"\nTesting word: '{item['word']}' in context: {item['text'][:80]}...")
         result = test_single_word(model, tokenizer, item['text'], item['word'], device)
-        if result.get('success') is not False:
-            results.append(result)
-            print_detailed_result(result)
+        if 'error' in result:
+            print(f"  Skipped: {result['error']}")
+            continue
+        results.append(result)
+        print_detailed_result(result)
     
     # Статистика
     if results:
@@ -302,7 +314,8 @@ def full_mode(model, tokenizer, device, num_samples=10):
         print(f"Total tested: {len(results)}")
         print(f"Successful: {successful}")
         print(f"Accuracy: {successful/len(results):.2%}")
-
+    else:
+        print("\nNo valid tests completed")
 
 def interactive_mode(model, tokenizer, device):
     """Интерактивный режим"""
