@@ -101,88 +101,32 @@ class ManticoreHybridSearch:
             max_tokens = self.MAX_SEQ_LEN - 2
         
         encoded = self.tokenizer.encode(text)
-        tokens = encoded.tokens
+        ids = encoded.ids
         
-        if len(tokens) <= max_tokens:
+        if len(ids) <= max_tokens:
             return text
         
-        truncated_tokens = tokens[:max_tokens]
-        # Декодируем список токенов напрямую
-        truncated_text = self.tokenizer.decode(truncated_tokens)
+        truncated_ids = ids[:max_tokens]
+        truncated_text = self.tokenizer.decode(truncated_ids)
         return truncated_text
-
-    def clean_text_for_tokenizer(self, text) -> str:
-        """Очистка текста: приводим к строке, убираем проблемные символы"""
-        # 1. Приводим к строке (даже если пришел int, list, None)
-        if text is None:
-            return ""
-        if not isinstance(text, str):
-            text = str(text)
-        
-        # 2. Если строка слишком короткая или не содержит текста
-        if len(text) < 2:
-            return ""
-        
-        # 3. Если строка похожа на ID или служебные данные
-        if text.strip().startswith('[') and text.strip().endswith(']'):
-            # Проверяем, не состоит ли она только из цифр внутри скобок
-            inner = text.strip()[1:-1]
-            if inner.isdigit() or inner == '':
-                return ""
-        
-        # 4. Оставляем только символы в нужных диапазонах
-        cleaned = []
-        for ch in text:
-            code = ord(ch)
-            if code == 9 or code == 10 or code == 13:  # tab, LF, CR
-                cleaned.append(ch)
-            elif 32 <= code <= 126:  # ASCII printable
-                cleaned.append(ch)
-            elif 0x0400 <= code <= 0x04FF:  # Cyrillic
-                cleaned.append(ch)
-            # остальные символы пропускаем
-        
-        result = ''.join(cleaned).strip()
-        
-        # 5. Если после очистки текст стал слишком коротким
-        if len(result) < 2:
-            return ""
-        
-        return result
-
 
     def get_embedding(self, text, pooling: str = "mean") -> np.ndarray:
         """Получение эмбеддинга текста"""
         try:
-            text = self.clean_text_for_tokenizer(text)
+            text = str(text)
             
-            if not text or len(text.strip()) < 2:
+            if not text or len(text.strip()) == 0:
                 return np.zeros(384)
             
             text = self.truncate_to_max_tokens(text)
             
-            # Пробуем токенизировать
             encoded = self.tokenizer.encode(text)
             
-        except Exception as e:
-            # Токенизатор в битом состоянии — пересоздаем
-            print(f"   [WARN] Tokenizer error, recreating... ({e})")
-            
-            from tokenizers import BertWordPieceTokenizer
-            vocab_path = Path(self.tokenizer_path) / "vocab.txt"
-            self.tokenizer = BertWordPieceTokenizer(str(vocab_path), lowercase=False)
-            
-            try:
-                encoded = self.tokenizer.encode(text)
-            except Exception as e2:
-                print(f"   [ERROR] Still failing after recreate: {e2}")
-                return np.zeros(384)
-        
-        try:
             input_ids = torch.tensor([encoded.ids]).to(self.device)
             attention_mask = torch.tensor([encoded.attention_mask]).to(self.device)
             
-            if input_ids.shape[1] > self.MAX_SEQ_LEN:
+            seq_len = input_ids.shape[1]
+            if seq_len > self.MAX_SEQ_LEN:
                 input_ids = input_ids[:, :self.MAX_SEQ_LEN]
                 attention_mask = attention_mask[:, :self.MAX_SEQ_LEN]
             
@@ -202,6 +146,7 @@ class ManticoreHybridSearch:
                 
         except Exception as e:
             print(f"   [get_embedding ERROR] {e}")
+            print(f"   text[:100]={str(text)[:100] if text else 'empty'}")
             return np.zeros(384)
     
     def search_manticore(
