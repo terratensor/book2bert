@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Анализ [CLS] эмбеддингов для v3 модели.
-Сохраняет координаты в CSV и PNG.
+Сохраняет координаты в CSV и визуализирует кластеры.
 """
 
 import torch
 import numpy as np
 import csv
 from sklearn.manifold import TSNE
+from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
@@ -57,6 +58,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_dir', type=str, required=True)
+    parser.add_argument('--n_clusters', type=int, default=2, help='Number of clusters for KMeans')
     args = parser.parse_args()
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -65,7 +67,7 @@ def main():
     
     bert, tokenizer = load_model(args.model_dir, device)
     
-    # Военные тексты (реальные из корпуса)
+    # Военные тексты
     texts = [
         "Генерал Шкуро командовал дивизией в трудных условиях.",
         "Танковая дивизия прорвала оборону противника.",
@@ -77,46 +79,68 @@ def main():
         "Фронтовая разведка доложила о передвижении вражеских колонн."
     ]
     
-    print(f"Analyzing {len(texts)} military texts...")
+    print(f"\nAnalyzing {len(texts)} military texts...")
     
     embeddings = []
     for text in texts:
         emb = get_cls_embedding(bert, tokenizer, text, device)
         embeddings.append(emb)
-        print(f"  {text[:50]}... → embedding shape {emb.shape}")
+        print(f"  {text[:50]}...")
     
     embeddings = np.array(embeddings)
     
-    # t-SNE визуализация
+    # t-SNE
     tsne = TSNE(n_components=2, random_state=42, perplexity=3)
     embeddings_2d = tsne.fit_transform(embeddings)
     
-    # Сохраняем координаты в CSV
+    # KMeans кластеризация
+    kmeans = KMeans(n_clusters=args.n_clusters, random_state=42)
+    labels = kmeans.fit_predict(embeddings_2d)
+    
+    # Сохраняем координаты и кластеры в CSV
     output_dir = Path("data/analysis")
     output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = output_dir / "cls_coordinates_military.csv"
+    csv_path = output_dir / "cls_coordinates.csv"
     
     with open(csv_path, 'w', encoding='utf-8', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['text', 'x', 'y'])
+        writer.writerow(['text', 'x', 'y', 'cluster'])
         for i, text in enumerate(texts):
-            writer.writerow([text, embeddings_2d[i, 0], embeddings_2d[i, 1]])
+            writer.writerow([text, embeddings_2d[i, 0], embeddings_2d[i, 1], int(labels[i])])
     
     print(f"\nCoordinates saved to: {csv_path}")
     
-    # Визуализация
+    # Визуализация с цветом по кластерам
     plt.figure(figsize=(14, 10))
-    plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], s=100, alpha=0.7)
+    colors = ['blue', 'red', 'green', 'purple'][:args.n_clusters]
+    
+    for cluster_id in range(args.n_clusters):
+        mask = labels == cluster_id
+        plt.scatter(embeddings_2d[mask, 0], embeddings_2d[mask, 1], 
+                   c=colors[cluster_id], s=100, alpha=0.7, label=f'Cluster {cluster_id}')
     
     for i, text in enumerate(texts):
-        plt.annotate(text[:30], (embeddings_2d[i, 0], embeddings_2d[i, 1]), fontsize=8, alpha=0.8)
+        plt.annotate(text[:30], (embeddings_2d[i, 0], embeddings_2d[i, 1]), 
+                    fontsize=8, alpha=0.8)
     
-    plt.title("t-SNE visualization of [CLS] embeddings (military texts only)")
+    plt.title(f"t-SNE visualization of [CLS] embeddings ({args.n_clusters} clusters)")
+    plt.legend()
     plt.tight_layout()
     
-    output_path = output_dir / "cls_embeddings_military.png"
+    output_path = output_dir / "cls_embeddings.png"
     plt.savefig(output_path, dpi=150)
     print(f"Plot saved to: {output_path}")
+    
+    # Вывод статистики по кластерам
+    print(f"\n{'='*60}")
+    print("CLUSTER ANALYSIS")
+    print(f"{'='*60}")
+    for cluster_id in range(args.n_clusters):
+        texts_in_cluster = [texts[i] for i in range(len(texts)) if labels[i] == cluster_id]
+        print(f"\nCluster {cluster_id} ({len(texts_in_cluster)} texts):")
+        for text in texts_in_cluster:
+            print(f"  - {text[:60]}...")
+    
     plt.show()
 
 
