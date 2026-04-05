@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
 Анализ [CLS] эмбеддингов для v3 модели.
+Сохраняет координаты в CSV и PNG.
 """
 
 import torch
 import numpy as np
+import csv
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -14,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "training"))
 
 from model import BERT
 from tokenizers import BertWordPieceTokenizer
+
 
 def load_model(model_dir, device="cuda"):
     tokenizer = BertWordPieceTokenizer(
@@ -39,6 +42,7 @@ def load_model(model_dir, device="cuda"):
     
     return bert, tokenizer
 
+
 def get_cls_embedding(bert, tokenizer, text, device="cuda"):
     encoded = tokenizer.encode(text)
     input_ids = torch.tensor([encoded.ids]).to(device)
@@ -47,6 +51,7 @@ def get_cls_embedding(bert, tokenizer, text, device="cuda"):
         hidden_states, _ = bert(input_ids)
     
     return hidden_states[0, 0, :].cpu().numpy()
+
 
 def main():
     import argparse
@@ -60,24 +65,25 @@ def main():
     
     bert, tokenizer = load_model(args.model_dir, device)
     
-    # Разные тексты для анализа
+    # Военные тексты (реальные из корпуса)
     texts = [
-        "Философия есть учение о всеобщем.",
-        "Методология — система принципов и способов организации деятельности.",
-        "Время есть форма бытия материи.",
-        "Пространство и время объективны.",
-        "Материя есть объективная реальность.",
-        "Сознание — свойство высокоорганизованной материи.",
-        "Диалектика — учение о развитии.",
-        "Генерал Шкуро командовал дивизией.",
+        "Генерал Шкуро командовал дивизией в трудных условиях.",
         "Танковая дивизия прорвала оборону противника.",
-        "Командование приняло решение об отступлении."
+        "Командование приняло решение об отступлении.",
+        "Солдаты пережили тяжелую зиму под Сталинградом.",
+        "Артиллерия вела огонь по позициям врага.",
+        "Разведчики проникли в тыл противника.",
+        "Получив подкрепление, батальон перешел в наступление.",
+        "Фронтовая разведка доложила о передвижении вражеских колонн."
     ]
+    
+    print(f"Analyzing {len(texts)} military texts...")
     
     embeddings = []
     for text in texts:
         emb = get_cls_embedding(bert, tokenizer, text, device)
         embeddings.append(emb)
+        print(f"  {text[:50]}... → embedding shape {emb.shape}")
     
     embeddings = np.array(embeddings)
     
@@ -85,20 +91,34 @@ def main():
     tsne = TSNE(n_components=2, random_state=42, perplexity=3)
     embeddings_2d = tsne.fit_transform(embeddings)
     
+    # Сохраняем координаты в CSV
+    output_dir = Path("data/analysis")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = output_dir / "cls_coordinates_military.csv"
+    
+    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['text', 'x', 'y'])
+        for i, text in enumerate(texts):
+            writer.writerow([text, embeddings_2d[i, 0], embeddings_2d[i, 1]])
+    
+    print(f"\nCoordinates saved to: {csv_path}")
+    
+    # Визуализация
     plt.figure(figsize=(14, 10))
     plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], s=100, alpha=0.7)
     
     for i, text in enumerate(texts):
         plt.annotate(text[:30], (embeddings_2d[i, 0], embeddings_2d[i, 1]), fontsize=8, alpha=0.8)
     
-    plt.title("t-SNE visualization of [CLS] embeddings (v3 model)")
+    plt.title("t-SNE visualization of [CLS] embeddings (military texts only)")
     plt.tight_layout()
     
-    output_path = Path("data/analysis/cls_embeddings_v3.png")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "cls_embeddings_military.png"
     plt.savefig(output_path, dpi=150)
-    print(f"Saved to: {output_path}")
+    print(f"Plot saved to: {output_path}")
     plt.show()
+
 
 if __name__ == "__main__":
     main()
