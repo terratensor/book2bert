@@ -45,6 +45,8 @@ class ManticoreHybridSearch:
         
         print(f"🔧 Используется устройство: {self.device}")
         
+        self.tokenizer_path = tokenizer_path
+
         # Загрузка BERT модели
         self._load_bert(bert_model_path, tokenizer_path)
         
@@ -105,7 +107,8 @@ class ManticoreHybridSearch:
             return text
         
         truncated_tokens = tokens[:max_tokens]
-        truncated_text = self.tokenizer.decode(self.tokenizer.encode(truncated_tokens).ids)
+        # Декодируем список токенов напрямую
+        truncated_text = self.tokenizer.decode(truncated_tokens)
         return truncated_text
 
     def clean_text_for_tokenizer(self, text) -> str:
@@ -151,22 +154,34 @@ class ManticoreHybridSearch:
     def get_embedding(self, text, pooling: str = "mean") -> np.ndarray:
         """Получение эмбеддинга текста"""
         try:
-            # Очистка и приведение к строке
             text = self.clean_text_for_tokenizer(text)
             
             if not text or len(text.strip()) < 2:
                 return np.zeros(384)
             
-            # Обрезаем до максимальной длины
             text = self.truncate_to_max_tokens(text)
             
-            # Токенизация
+            # Пробуем токенизировать
             encoded = self.tokenizer.encode(text)
             
+        except Exception as e:
+            # Токенизатор в битом состоянии — пересоздаем
+            print(f"   [WARN] Tokenizer error, recreating... ({e})")
+            
+            from tokenizers import BertWordPieceTokenizer
+            vocab_path = Path(self.tokenizer_path) / "vocab.txt"
+            self.tokenizer = BertWordPieceTokenizer(str(vocab_path), lowercase=False)
+            
+            try:
+                encoded = self.tokenizer.encode(text)
+            except Exception as e2:
+                print(f"   [ERROR] Still failing after recreate: {e2}")
+                return np.zeros(384)
+        
+        try:
             input_ids = torch.tensor([encoded.ids]).to(self.device)
             attention_mask = torch.tensor([encoded.attention_mask]).to(self.device)
             
-            # Обрезаем, если превышает MAX_SEQ_LEN
             if input_ids.shape[1] > self.MAX_SEQ_LEN:
                 input_ids = input_ids[:, :self.MAX_SEQ_LEN]
                 attention_mask = attention_mask[:, :self.MAX_SEQ_LEN]
@@ -187,7 +202,6 @@ class ManticoreHybridSearch:
                 
         except Exception as e:
             print(f"   [get_embedding ERROR] {e}")
-            print(f"   text type: {type(text)}, value: {str(text)[:100] if text else 'empty'}")
             return np.zeros(384)
     
     def search_manticore(
