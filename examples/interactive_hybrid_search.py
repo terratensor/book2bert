@@ -162,7 +162,7 @@ class ManticoreHybridSearch:
         
         payload = {
             "table": self.table_name,
-            "query": {"query_string": query},
+            "query": {"query_string": f'@content {query}'},
             "limit": limit,
             "offset": offset
         }
@@ -299,13 +299,13 @@ class ManticoreHybridSearch:
                     return []
         
         # Получаем эмбеддинги батчами
-        batch_size = 8
+        batch_size = 64
         candidate_embs = []
         
         for i in range(0, len(candidate_texts), batch_size):
             batch = candidate_texts[i:i+batch_size]
             batch_embs = []
-            for text in batch:
+            for text in batch:                
                 emb = self.get_embedding(text, pooling="mean")
                 batch_embs.append(emb)
             candidate_embs.extend(batch_embs)
