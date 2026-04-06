@@ -29,7 +29,8 @@ go.sum
 *~
 
 # Project specific
-data
+data/processed/
+data/models/
 *.log
 wandb/
 runs/
