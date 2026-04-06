@@ -146,7 +146,8 @@ def save_checkpoint(path, epoch, global_step, step_in_epoch, model, optimizer, s
 
 def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokenizer,
                 mlm_probability, grad_accum_steps, epoch, start_step, global_step, logger,
-                output_dir, config, best_val_loss, checkpoint_freq=10000, last_checkpoint_freq=1000):
+                output_dir, config, best_val_loss, total_steps,  # ← добавлен total_steps
+                checkpoint_freq=10000, last_checkpoint_freq=1000):
     model.train()
     total_loss = 0
     steps_in_epoch = start_step
@@ -186,7 +187,10 @@ def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokeniz
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
-            scheduler.step()
+            
+            # Защита от превышения total_steps
+            if global_step <= total_steps:
+                scheduler.step()
             
             current_lr = scheduler.get_last_lr()[0]
             logger.log_step(global_step, epoch + 1, steps_in_epoch, step_loss, current_lr, grad_norm)
@@ -209,12 +213,14 @@ def train_epoch(model, dataloader, optimizer, scheduler, scaler, device, tokeniz
     avg_loss = total_loss / (steps_in_epoch - start_step) if steps_in_epoch > start_step else 0
     
     # Добавляем эпохальные метрики обучения
-    current_lr = scheduler.get_last_lr()[0]
+    if global_step <= total_steps:
+        current_lr = scheduler.get_last_lr()[0]
+    else:
+        current_lr = 0.0
     logger.writer.add_scalar('epoch/learning_rate', current_lr, epoch)
     logger.writer.add_scalar('epoch/train_loss', avg_loss, epoch)
     
     return avg_loss, global_step, steps_in_epoch
-
 
 def eval_epoch(model, dataloader, device, tokenizer, mlm_probability, max_batches=200):
     model.eval()
@@ -379,6 +385,7 @@ def main():
             model, train_loader, optimizer, scheduler, scaler, device, tokenizer,
             config['data']['mlm_probability'], config['training'].get('gradient_accumulation_steps', 1),
             epoch, step_start, global_step, logger, output_dir, config, best_val_loss,
+            total_steps,  # ← добавить
             args.checkpoint_every, args.last_checkpoint_every
         )
         
@@ -409,6 +416,23 @@ def main():
         print(f"  Learning rate: {scheduler.get_last_lr()[0]:.2e}")
         print(f"  Best val loss: {best_val_loss:.4f}")
         print(f"  Time: {(datetime.now() - epoch_start).total_seconds():.1f}s")
+
+    # Финальная валидация после всех эпох
+    print("\n" + "="*50)
+    print("Final validation after all epochs")
+    print("="*50)
+    
+    final_val_loss = eval_epoch(model, val_loader, device, tokenizer,
+                                config['data']['mlm_probability'], args.max_val_batches)
+    final_perplexity = torch.exp(torch.tensor(final_val_loss)).item()
+    print(f"Final val_loss: {final_val_loss:.4f}")
+    print(f"Final perplexity: {final_perplexity:.2f}")
+    
+    if final_val_loss < best_val_loss:
+        best_val_loss = final_val_loss
+        save_checkpoint(output_dir / 'best_model.pt', epoch, global_step, steps_completed,
+                       model, optimizer, scheduler, scaler, best_val_loss, config)
+        print(f"  ✓ Saved best model (val_loss: {final_val_loss:.4f})")
     
     logger.close()
     print(f"\n{'='*50}")
