@@ -148,6 +148,8 @@ func processFile(ctx context.Context, task FileTask, seg segmenter.Segmenter, re
 	text = textutils.NormalizeText(text)
 	// Удаляем мусор
 	text = textutils.CleanText(text)
+	// Удаляем не-русский текст
+	text = textutils.FilterNonRussian(text)
 
 	// Извлекаем метаданные из имени файла (сначала!)
 	genre, author, title := parseMetadataFromFilename(task.Filename)
