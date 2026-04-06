@@ -49,7 +49,7 @@ def main():
     ]
     
     print("="*60)
-    print("MLM Predictions (v3, after epoch 1)")
+    print("MLM Predictions (v3, after epoch 5)")
     print("="*60 + "\n")
     
     for text in test_texts:

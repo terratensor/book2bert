@@ -363,8 +363,11 @@ def main():
             pct_start=0.1
         )
         # Продвигаем scheduler на количество уже сделанных шагов
+        # При восстановлении scheduler
         for _ in range(global_step):
-            scheduler.step()
+            # Не вызываем scheduler.step(), если это приведет к превышению total_steps
+            if _ < total_steps:
+                scheduler.step()
         
         print(f"Resumed: epoch {start_epoch}, step_in_epoch {start_step}, global_step {global_step}, best_val_loss {best_val_loss:.4f}")
         print(f"Recreated scheduler: total_steps={total_steps}, advanced to step {global_step}")

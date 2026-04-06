@@ -121,7 +121,7 @@ def main():
     examples = load_real_examples(sentences_dir, 8)
     
     print("="*60)
-    print("MLM Predictions on military-historical texts (after epoch 1)")
+    print("MLM Predictions on military-historical texts (after epoch 5)")
     print("="*60 + "\n")
     
     for original in examples:
