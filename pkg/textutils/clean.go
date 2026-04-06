@@ -11,22 +11,19 @@ func CleanText(text string) string {
 	// 1. Удаляем управляющие символы
 	text = regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`).ReplaceAllString(text, "")
 
-	// 2. Восстанавливаем разорванные слова "внима тельно" → "внимательно"
-	text = fixBrokenWords(text)
-
-	// 3. Восстанавливаем переносы слов "внима- \n тельно" → "внимательно"
+	// 2. Восстанавливаем переносы слов "внима- \n тельно" → "внимательно"
 	text = fixHyphenatedWords(text)
 
-	// 4. Удаляем строки с метаданными (ISBN, УДК, ББК)
+	// 3. Удаляем строки с метаданными (ISBN, УДК, ББК)
 	text = regexp.MustCompile(`(?m)^.*\b(?:ISBN|УДК|ББК|ISSN|DOI|УДК|ББК)\b.*$`).ReplaceAllString(text, "")
 
-	// 5. Удаляем нумерацию (строки, состоящие только из цифр и точки)
+	// 4. Удаляем нумерацию (строки, состоящие только из цифр и точки)
 	text = regexp.MustCompile(`(?m)^\s*\d+\.?\s*$`).ReplaceAllString(text, "")
 
-	// 6. Удаляем оглавления (цифры в конце строки)
+	// 5. Удаляем оглавления (цифры в конце строки)
 	text = regexp.MustCompile(`([А-Яа-яЁё])(\d+)(?:\s|$)`).ReplaceAllString(text, "$1")
 
-	// 7. Удаляем строки-таблицы (много цифр и знаков)
+	// 6. Удаляем строки-таблицы (много цифр и знаков)
 	lines := strings.Split(text, "\n")
 	var cleanedLines []string
 	for _, line := range lines {
@@ -43,32 +40,24 @@ func CleanText(text string) string {
 	}
 	text = strings.Join(cleanedLines, "\n")
 
-	// 8. Удаляем специальные символы
+	// 7. Удаляем специальные символы
 	specialChars := regexp.MustCompile(`[▲►▼◄■□▪▫●○◦★☆♦✓✗→←↑↓]`)
 	text = specialChars.ReplaceAllString(text, "")
 
-	// 9. Удаляем повторяющиеся символы
+	// 8. Удаляем повторяющиеся символы
 	text = regexp.MustCompile(`(?m)^[=\-*_]{10,}$`).ReplaceAllString(text, "")
 
-	// 10. Нормализуем пробелы
-	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+	// 9. Нормализуем пробелы (один пробел вместо многих)
+	text = regexp.MustCompile(`[ \t]+`).ReplaceAllString(text, " ")
+
+	// 10. Удаляем пробелы перед знаками препинания
+	text = regexp.MustCompile(`\s+([.,!?;:])`).ReplaceAllString(text, "$1")
 
 	return strings.TrimSpace(text)
 }
 
-// fixBrokenWords исправляет разрывы слов: "внима тельно" → "внимательно"
-func fixBrokenWords(text string) string {
-	// Буква + пробел + буква → буква + буква
-	re := regexp.MustCompile(`(\p{L})[ \t]+(\p{L})`)
-	for re.MatchString(text) {
-		text = re.ReplaceAllString(text, "$1$2")
-	}
-	return text
-}
-
 // fixHyphenatedWords исправляет переносы слов: "внима- \n тельно" → "внимательно"
 func fixHyphenatedWords(text string) string {
-	// Слово с дефисом + перенос строки + продолжение
 	re := regexp.MustCompile(`(\p{L}+)-\s*\n\s*(\p{L}+)`)
 	text = re.ReplaceAllString(text, "$1$2")
 	return text
@@ -100,11 +89,10 @@ func isTableLine(line string) bool {
 
 // isBibliographicLine проверяет строки с библиографическими ссылками
 func isBibliographicLine(line string) bool {
-	// Паттерны: "М Ѵ.І48, 151; Я 1.85", "Бдх П.3.45", "Вдх 5.3"
 	patterns := []string{
-		`[А-ЯЁ]\s+[ѴІ]\.\s*[А-ЯЁ]?\d+`, // М Ѵ.І48
-		`[А-ЯЁ]{2,3}\s+[А-ЯЁ]?\.\d+`,   // Бдх П.3.45
-		`[А-ЯЁ]\.\s*\d+\.\d+`,          // Я 1.85
+		`[А-ЯЁ]\s+[ѴІ]\.\s*[А-ЯЁ]?\d+`,
+		`[А-ЯЁ]{2,3}\s+[А-ЯЁ]?\.\d+`,
+		`[А-ЯЁ]\.\s*\d+\.\d+`,
 	}
 	for _, pattern := range patterns {
 		if matched, _ := regexp.MatchString(pattern, line); matched {
@@ -114,7 +102,7 @@ func isBibliographicLine(line string) bool {
 	return false
 }
 
-// isGarbageLine проверяет строки с битыми символами (>30% не-буквенных символов)
+// isGarbageLine проверяет строки с битыми символам (<30% букв)
 func isGarbageLine(line string) bool {
 	if len(line) < 10 {
 		return false
@@ -132,7 +120,7 @@ func isGarbageLine(line string) bool {
 		return false
 	}
 	ratio := float64(letterCount) / float64(total)
-	return ratio < 0.3 // менее 30% букв → мусор
+	return ratio < 0.3
 }
 
 // IsAcceptableChar проверяет, можно ли оставить символ
