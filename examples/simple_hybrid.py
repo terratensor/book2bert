@@ -9,8 +9,8 @@ import numpy as np
 from typing import List, Dict
 
 # Конфигурация
-MANTICORE_URL = "http://89.179.122.36:1122/search"
-API_KEY = "34plVxB253RIs1VZ0yanoJFe6inRvGThVgoUPsuAsTU="
+MANTICORE_URL = "http://localhost:9308/search"
+API_KEY = ""
 TABLE_NAME = "library2026"
 
 
