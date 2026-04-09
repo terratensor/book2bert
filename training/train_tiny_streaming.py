@@ -249,13 +249,31 @@ def eval_epoch(model, dataloader, device, tokenizer, mlm_probability, max_batche
     # Они будут вызваны из main после получения val_loss
     return avg_loss
 
-def count_examples(dataset_path, split):
-    """Быстрый подсчет примеров в JSONL файлах"""
+def count_examples(dataset_path, split, cache_file):
+    """Подсчет примеров с кэшированием"""
+    if cache_file.exists():
+        with open(cache_file, 'r') as f:
+            cache = json.load(f)
+            if split in cache:
+                print(f"  Using cached {split}: {cache[split]:,} examples")
+                return cache[split]
+    
+    print(f"  Counting {split} examples (first time, may take a while)...")
     data_dir = Path(dataset_path) / split
     total = 0
-    for filepath in data_dir.glob("*.jsonl"):
+    for filepath in tqdm(list(data_dir.glob("*.jsonl")), desc=f"Counting {split}"):
         with open(filepath, 'r') as f:
             total += sum(1 for _ in f)
+    
+    # Сохраняем в кэш
+    cache = {}
+    if cache_file.exists():
+        with open(cache_file, 'r') as f:
+            cache = json.load(f)
+    cache[split] = total
+    with open(cache_file, 'w') as f:
+        json.dump(cache, f, indent=2)
+    
     return total
 
 def main():
@@ -295,17 +313,9 @@ def main():
     
 
     # ========== ПОДСЧЕТ ПРИМЕРОВ И РАСЧЕТ total_steps ==========
-    print("\nCounting training examples...")
-    train_examples = 0
-    for filepath in Path(args.dataset_path).glob("train/*.jsonl"):
-        with open(filepath, 'r') as f:
-            train_examples += sum(1 for _ in f)
-    
-    print("Counting validation examples...")
-    val_examples = 0
-    for filepath in Path(args.dataset_path).glob("val/*.jsonl"):
-        with open(filepath, 'r') as f:
-            val_examples += sum(1 for _ in f)
+    cache_file = output_dir / "example_counts.json"
+    train_examples = count_examples(args.dataset_path, "train", cache_file)
+    val_examples = count_examples(args.dataset_path, "val", cache_file)
     
     print(f"Train: {train_examples:,}, Val: {val_examples:,}")
     
