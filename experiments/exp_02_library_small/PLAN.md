@@ -62,3 +62,50 @@ python training/train_small_streaming.py \
     --dataset_path data/processed/dataset_full \
     --output_dir data/models/full_small
 ```
+
+
+
+# Итоговые команды
+
+## Следующие шаги
+
+### 1. Сбор корпуса для токенизатора
+
+```bash
+go run cmd/corpus-builder/main.go \
+    --sentences /mnt/archive/book2bert/data/processed/sentences_full \
+    --output /mnt/archive/book2bert/data/processed/corpus_full.txt \
+    --workers 32 \
+    --filter-cjk true
+```
+
+**Ожидаемое время:** 2-3 часа (408 GB → один файл)
+
+### 2. Тестирование оптимального размера словаря
+
+```bash
+# Взять выборку (10%)
+head -n 100000000 /mnt/archive/book2bert/data/processed/corpus_full.txt > corpus_sample.txt
+
+# Протестировать разные vocab_size
+for size in 30000 50000 70000 100000 120000; do
+    python scripts/train_tokenizer_from_corpus.py \
+        --corpus corpus_sample.txt \
+        --output-dir tokenizer_test_$size \
+        --vocab-size $size
+done
+```
+
+### 3. Сборка датасета
+
+```bash
+python scripts/build_dataset.py \
+    --sentences-dir /mnt/archive/book2bert/data/processed/sentences_full \
+    --tokenizer-path data/processed/tokenizer_full_optimal \
+    --output-dir /mnt/archive/book2bert/data/processed/dataset_full \
+    --max-length 512 \
+    --val-split 0.05 \
+    --batch-size 2000
+```
+
+---
