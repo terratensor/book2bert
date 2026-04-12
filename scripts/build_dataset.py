@@ -5,18 +5,28 @@
 - Токенизация каждого предложения ОДИН раз
 - Группировка без повторной токенизации
 - Разбивка по \n на этапе загрузки
+- Поддержка случайной выборки предложений (sample_ratio)
 """
 
 import os
 import json
 import argparse
+import random
 from pathlib import Path
 from tokenizers import BertWordPieceTokenizer
 from tqdm import tqdm
-import random
 
-def stream_sentences_by_book(sentences_dir):
-    """Генератор, читающий предложения по книгам."""
+
+def stream_sentences_by_book(sentences_dir, sample_ratio=1.0, seed=42):
+    """
+    Генератор, читающий предложения по книгам.
+    
+    Args:
+        sentences_dir: директория с JSONL файлами
+        sample_ratio: доля предложений для включения (0.0-1.0)
+        seed: seed для случайного отбора
+    """
+    random.seed(seed)
     files = list(Path(sentences_dir).glob("*.jsonl"))
     random.shuffle(files)
     
@@ -31,16 +41,26 @@ def stream_sentences_by_book(sentences_dir):
                     text = data["text"]
                     if not text.strip():
                         continue
+                    
+                    # Случайная выборка предложений
+                    if sample_ratio < 1.0 and random.random() > sample_ratio:
+                        continue
+                    
                     sentences.append({
                         "text": text,
                         "genre": data.get("genre", "Unknown"),
                         "position": data.get("position", 0)
                     })
         
+        if not sentences:
+            continue
+            
         sentences.sort(key=lambda x: x["position"])
         yield book_id, sentences
 
+
 def tokenize_sentences_batch(tokenizer, sentences, batch_size=1000):
+    """Токенизирует предложения батчами."""
     tokenized = []
     
     for i in range(0, len(sentences), batch_size):
@@ -64,6 +84,7 @@ def tokenize_sentences_batch(tokenizer, sentences, batch_size=1000):
             })
     
     return tokenized
+
 
 def group_sentences_exact(tokenized_sentences, max_length=512):
     """
@@ -91,6 +112,7 @@ def group_sentences_exact(tokenized_sentences, max_length=512):
         groups.append(current_group)
     
     return groups
+
 
 def encode_group(tokenizer, group, max_length=512):
     """
@@ -131,6 +153,7 @@ def encode_group(tokenizer, group, max_length=512):
         "token_type_ids": [0] * max_length
     }
 
+
 def save_examples(output_dir, split, examples):
     """Сохраняет примеры в JSONL файл."""
     output_dir = Path(output_dir) / split
@@ -143,15 +166,27 @@ def save_examples(output_dir, split, examples):
         for ex in examples:
             f.write(json.dumps(ex, ensure_ascii=False) + '\n')
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--sentences-dir', type=str, required=True)
-    parser.add_argument('--tokenizer-path', type=str, required=True)
-    parser.add_argument('--output-dir', type=str, required=True)
-    parser.add_argument('--max-length', type=int, default=512)
-    parser.add_argument('--val-split', type=float, default=0.05)
-    parser.add_argument('--max-books', type=int, default=None)
-    parser.add_argument('--batch-size', type=int, default=1000, help='Размер батча для токенизации')
+    parser.add_argument('--sentences-dir', type=str, required=True,
+                        help='Директория с JSONL файлами предложений')
+    parser.add_argument('--tokenizer-path', type=str, required=True,
+                        help='Путь к токенизатору (папка с vocab.txt)')
+    parser.add_argument('--output-dir', type=str, required=True,
+                        help='Выходная директория для датасета')
+    parser.add_argument('--max-length', type=int, default=512,
+                        help='Максимальная длина последовательности')
+    parser.add_argument('--val-split', type=float, default=0.05,
+                        help='Доля валидационной выборки (0.0-1.0)')
+    parser.add_argument('--max-books', type=int, default=None,
+                        help='Ограничить количество книг (для теста)')
+    parser.add_argument('--batch-size', type=int, default=1000,
+                        help='Размер батча для токенизации')
+    parser.add_argument('--sample-ratio', type=float, default=1.0,
+                        help='Доля предложений для включения в датасет (0.0-1.0). Например, 0.1 = 10%')
+    parser.add_argument('--sample-seed', type=int, default=42,
+                        help='Seed для случайного отбора предложений')
     args = parser.parse_args()
     
     tokenizer = BertWordPieceTokenizer(
@@ -160,6 +195,7 @@ def main():
     )
     print(f"Tokenizer loaded, vocab_size={tokenizer.get_vocab_size()}")
     print(f"Batch size: {args.batch_size}")
+    print(f"Sample ratio: {args.sample_ratio * 100:.1f}%")
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -167,7 +203,11 @@ def main():
     train_count = 0
     val_count = 0
     
-    for book_id, sentences in tqdm(stream_sentences_by_book(args.sentences_dir), desc="Processing books"):
+    for book_id, sentences in tqdm(stream_sentences_by_book(
+        args.sentences_dir, 
+        sample_ratio=args.sample_ratio, 
+        seed=args.sample_seed
+    ), desc="Processing books"):
         is_val = (hash(book_id) % 100) < (args.val_split * 100)
         split = "val" if is_val else "train"
         
@@ -202,6 +242,8 @@ def main():
     print(f"\n=== Done ===")
     print(f"Train examples: {train_count}")
     print(f"Val examples: {val_count}")
+    print(f"Sample ratio used: {args.sample_ratio * 100:.1f}%")
+
 
 if __name__ == "__main__":
     main()
