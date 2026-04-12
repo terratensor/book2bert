@@ -41,23 +41,24 @@ def stream_sentences_by_book(sentences_dir):
         yield book_id, sentences
 
 def tokenize_sentences_batch(tokenizer, sentences, batch_size=1000):
-    """
-    Токенизирует предложения батчами (быстрее, чем по одному).
-    Возвращает список словарей с ключами 'ids', 'text', 'genre'.
-    """
     tokenized = []
     
     for i in range(0, len(sentences), batch_size):
         batch = sentences[i:i+batch_size]
         texts = [s["text"] for s in batch]
         
-        # Батчевая токенизация (один вызов C++ кода)
         encoded_batch = tokenizer.encode_batch(texts)
         
         for j, encoded in enumerate(encoded_batch):
+            ids = encoded.ids
+            # Удаляем [CLS] и [SEP], которые добавил токенизатор
+            cls_id = tokenizer.token_to_id("[CLS]")
+            sep_id = tokenizer.token_to_id("[SEP]")
+            ids = [id for id in ids if id not in (cls_id, sep_id)]
+            
             tokenized.append({
-                "ids": encoded.ids,
-                "length": len(encoded.ids),
+                "ids": ids,
+                "length": len(ids),
                 "text": batch[j]["text"],
                 "genre": batch[j]["genre"]
             })
