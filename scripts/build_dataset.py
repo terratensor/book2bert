@@ -18,19 +18,16 @@ from tqdm import tqdm
 
 
 def stream_sentences_by_book(sentences_dir, sample_ratio=1.0, seed=42):
-    """
-    Генератор, читающий предложения по книгам.
-    
-    Args:
-        sentences_dir: директория с JSONL файлами
-        sample_ratio: доля предложений для включения (0.0-1.0)
-        seed: seed для случайного отбора
-    """
+    """Генератор, читающий предложения по книгам с выборкой на уровне файлов."""
     random.seed(seed)
     files = list(Path(sentences_dir).glob("*.jsonl"))
     random.shuffle(files)
     
     for filepath in files:
+        # Выборка на уровне файлов
+        if sample_ratio < 1.0 and random.random() > sample_ratio:
+            continue
+        
         book_id = filepath.stem
         sentences = []
         
@@ -41,24 +38,15 @@ def stream_sentences_by_book(sentences_dir, sample_ratio=1.0, seed=42):
                     text = data["text"]
                     if not text.strip():
                         continue
-                    
-                    # Случайная выборка предложений
-                    if sample_ratio < 1.0 and random.random() > sample_ratio:
-                        continue
-                    
                     sentences.append({
                         "text": text,
                         "genre": data.get("genre", "Unknown"),
                         "position": data.get("position", 0)
                     })
         
-        if not sentences:
-            continue
-            
         sentences.sort(key=lambda x: x["position"])
         yield book_id, sentences
-
-
+        
 def tokenize_sentences_batch(tokenizer, sentences, batch_size=1000):
     """Токенизирует предложения батчами."""
     tokenized = []
