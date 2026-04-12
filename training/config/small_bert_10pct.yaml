@@ -4,15 +4,14 @@ name: small_bert_10pct
 model:
   vocab_size: 120000
   hidden_size: 512
-  num_layers: 8
-  num_heads: 16
+  num_layers: 12
+  num_heads: 8
   intermediate_size: 2048
   max_position: 512
   dropout: 0.1
 
 training:
-  batch_size: 8
-  gradient_accumulation_steps: 2
+  batch_size: 8  
   learning_rate: 5.0e-5
   weight_decay: 0.01
   num_epochs: 5

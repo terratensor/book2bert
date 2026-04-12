@@ -14,7 +14,7 @@ from tokenizers import BertWordPieceTokenizer
 
 
 def load_real_examples(sentences_dir, num_examples=10):
-    """Загружает реальные предложения из militera корпуса"""
+    """Загружает реальные предложения из full корпуса"""
     files = list(Path(sentences_dir).glob("*.jsonl"))
     random.shuffle(files)
     examples = []
@@ -86,9 +86,9 @@ def main():
     print(f"Using device: {device}")
     
     # Пути
-    model_path = "data/models/tiny_bert_militera_v3/best_model.pt"
-    tokenizer_path = "/mnt/archive/book2bert/data/processed/tokenizer_militera_v3"
-    sentences_dir = "/mnt/archive/book2bert/data/processed/sentences_militera_v3"
+    model_path = "data/models/small_bert_10pct/checkpoints/last_checkpoint.pt"
+    tokenizer_path = "data/processed/tokenizer_full"
+    sentences_dir = "data/processed/sentences_full"
     
     # Загружаем токенизатор
     tokenizer = BertWordPieceTokenizer(
@@ -98,15 +98,15 @@ def main():
     
     # Создаем модель
     bert = BERT(
-        vocab_size=50000,
-        hidden_size=384,
-        num_layers=6,
-        num_heads=12,
-        intermediate_size=1536,
+        vocab_size=120000,
+        hidden_size=512,
+        num_layers=12,
+        num_heads=8,
+        intermediate_size=2048,
         max_position=512,
         dropout=0.1
     )
-    model = BERTForMLM(bert, vocab_size=50000)
+    model = BERTForMLM(bert, vocab_size=120000)
     
     # Загружаем веса
     checkpoint = torch.load(model_path, map_location=device)

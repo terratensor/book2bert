@@ -109,3 +109,14 @@ python scripts/build_dataset.py \
 ```
 
 ---
+
+# Обучение
+```bash
+export CUDA_VISIBLE_DEVICES=0
+```
+```bash
+python training/train_streaming.py \
+    --config training/config/small_bert_10pct.yaml \
+    --dataset_path data/processed/dataset_10pct \
+    --output_dir data/models/small_bert_10pct
+```
