@@ -46,3 +46,18 @@ head -5 data/analysis/long_sentences.jsonl | jq -r '.text' | head -20
 # Или посчитаем, сколько их по жанрам
 cat data/analysis/long_sentences.jsonl | jq -r '.genre' | sort | uniq -c | sort -rn
 ```
+
+
+## 3. Запуск фильтрации
+
+```bash
+# Создаём выходную директорию
+mkdir -p data/processed/sentences_filtered
+
+# Запускаем фильтрацию
+go run cmd/filter-corpus/main.go \
+    --input data/processed/sentences_full \
+    --output data/processed/sentences_filtered \
+    --workers 32 \
+    --num-outputs 10000
+```
