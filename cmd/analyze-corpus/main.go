@@ -54,7 +54,7 @@ type Stats struct {
 	HighUppercase50 int64
 	HighUppercase80 int64
 
-	// Дубликаты (опционально, требует памяти)
+	// Дубликаты (опционально)
 	Duplicates int64
 	uniqueMap  map[[16]byte]bool
 	mu         sync.Mutex
@@ -73,13 +73,13 @@ type FileStats struct {
 	GarbageRatio float64
 }
 
+// Progress отслеживает прогресс обработки
 type Progress struct {
 	processedFiles int64
 	totalFiles     int64
 	startTime      time.Time
 }
 
-// isRussian проверяет наличие кириллицы
 func isRussian(text string) bool {
 	for _, r := range text {
 		if r >= 0x0400 && r <= 0x04FF {
@@ -89,7 +89,6 @@ func isRussian(text string) bool {
 	return false
 }
 
-// isEnglish проверяет наличие латиницы
 func isEnglish(text string) bool {
 	for _, r := range text {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
@@ -99,7 +98,6 @@ func isEnglish(text string) bool {
 	return false
 }
 
-// digitRatio считает долю цифр
 func digitRatio(text string) float64 {
 	digits := 0
 	for _, r := range text {
@@ -110,7 +108,6 @@ func digitRatio(text string) float64 {
 	return float64(digits) / float64(len(text))
 }
 
-// punctRatio считает долю пунктуации
 func punctRatio(text string) float64 {
 	punct := 0
 	for _, r := range text {
@@ -121,7 +118,6 @@ func punctRatio(text string) float64 {
 	return float64(punct) / float64(len(text))
 }
 
-// uppercaseRatio считает долю заглавных букв
 func uppercaseRatio(text string) float64 {
 	upper := 0
 	letters := 0
@@ -139,14 +135,12 @@ func uppercaseRatio(text string) float64 {
 	return float64(upper) / float64(letters)
 }
 
-// hasListMarker проверяет, начинается ли строка с маркера списка
 var listMarkerRegex = regexp.MustCompile(`^\s*[•\-*•\d]+[\.\)]\s+`)
 
 func hasListMarker(text string) bool {
 	return listMarkerRegex.MatchString(text)
 }
 
-// hasGarbagePatterns проверяет наличие мусорных паттернов
 var (
 	isbnRegex  = regexp.MustCompile(`\bISBN\s*\d{3}-\d{1,5}-\d{1,7}-\d{1,7}-\d{1,7}\b`)
 	udkRegex   = regexp.MustCompile(`\bУДК\s*\d+(?:\.\d+)+\b`)
@@ -164,7 +158,6 @@ func hasGarbagePatterns(text string) (hasISBN, hasUDK, hasBBK, hasURL, hasEmail 
 	return
 }
 
-// analyzeFile анализирует один JSONL файл
 func analyzeFile(filePath string, stats *Stats, fileStatsChan chan<- FileStats, wg *sync.WaitGroup, sem chan struct{}, progress *Progress) {
 	defer wg.Done()
 	sem <- struct{}{}
@@ -296,12 +289,10 @@ func analyzeFile(filePath string, stats *Stats, fileStatsChan chan<- FileStats, 
 		}
 	}
 
-	// Сохраняем локальные длины в общий срез
 	stats.mu.Lock()
 	stats.Lengths = append(stats.Lengths, localLengths...)
 	stats.mu.Unlock()
 
-	// Нормализуем ratios
 	if localStats.Sentences > 0 {
 		localStats.RussianRatio /= float64(localStats.Sentences)
 		localStats.EnglishRatio /= float64(localStats.Sentences)
@@ -345,8 +336,6 @@ func main() {
 	sem := make(chan struct{}, *workers)
 	var wg sync.WaitGroup
 
-	start := time.Now()
-
 	// Запускаем горутину для отображения прогресса
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -359,7 +348,6 @@ func main() {
 			elapsed := time.Since(progress.startTime)
 			speed := float64(processed) / elapsed.Seconds()
 			percent := float64(processed) / float64(progress.totalFiles) * 100
-
 			log.Printf("[PROGRESS] %d/%d files processed (%.1f%%), speed: %.1f files/sec, elapsed: %v",
 				processed, progress.totalFiles, percent, speed, elapsed.Round(time.Second))
 		}
@@ -375,7 +363,6 @@ func main() {
 		close(fileStatsChan)
 	}()
 
-	// Собираем пофайловую статистику
 	var fileStatsList []FileStats
 	for fs := range fileStatsChan {
 		fileStatsList = append(fileStatsList, fs)
@@ -385,14 +372,11 @@ func main() {
 	log.Printf("[PROGRESS] COMPLETE: %d/%d files processed in %v",
 		atomic.LoadInt64(&progress.processedFiles), progress.totalFiles, totalTime.Round(time.Second))
 
-	elapsed := time.Since(start)
-
 	// Сортируем длины для перцентилей
 	sort.Slice(stats.Lengths, func(i, j int) bool {
 		return stats.Lengths[i] < stats.Lengths[j]
 	})
 
-	// Вычисляем перцентили
 	percentiles := []float64{1, 5, 10, 25, 50, 75, 90, 95, 99}
 	percentileValues := make(map[float64]int64)
 	for _, p := range percentiles {
@@ -437,25 +421,29 @@ func main() {
 		"has_email":             stats.HasEmail,
 		"high_uppercase_50":     stats.HighUppercase50,
 		"high_uppercase_80":     stats.HighUppercase80,
-		"analysis_time_seconds": elapsed.Seconds(),
+		"analysis_time_seconds": totalTime.Seconds(),
 	}
 
-	// Создаём выходную директорию
 	os.MkdirAll(*outputDir, 0755)
 
-	// Сохраняем JSON
 	jsonPath := filepath.Join(*outputDir, "stats_summary.json")
-	jsonData, _ := json.MarshalIndent(summary, "", "  ")
-	os.WriteFile(jsonPath, jsonData, 0644)
-	log.Printf("Saved summary to %s", jsonPath)
+	jsonData, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		log.Printf("ERROR marshalling JSON: %v", err)
+	} else {
+		if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
+			log.Printf("ERROR writing JSON: %v", err)
+		} else {
+			log.Printf("Saved summary to %s", jsonPath)
+		}
+	}
 
-	// Сохраняем гистограмму длин
+	// Сохраняем гистограмму
 	histPath := filepath.Join(*outputDir, "stats_length_histogram.csv")
 	histFile, _ := os.Create(histPath)
 	defer histFile.Close()
 	histWriter := csv.NewWriter(histFile)
 	histWriter.Write([]string{"bucket", "count"})
-	// Простая гистограмма с шагом 100
 	bucketSize := int64(100)
 	buckets := make(map[int64]int64)
 	for _, l := range stats.Lengths {
@@ -473,16 +461,11 @@ func main() {
 	fileStatsFile, _ := os.Create(fileStatsPath)
 	defer fileStatsFile.Close()
 	fsWriter := csv.NewWriter(fileStatsFile)
-	fsWriter.Write([]string{"file", "sentences", "avg_length", "russian_ratio", "english_ratio", "mixed_ratio", "digit_ratio_30", "list_ratio", "garbage_ratio"})
+	fsWriter.Write([]string{"file", "sentences", "russian_ratio", "english_ratio", "mixed_ratio", "digit_ratio_30", "list_ratio", "garbage_ratio"})
 	for _, fs := range fileStatsList {
-		avgLength := 0.0
-		if fs.Sentences > 0 {
-			// Нужно было сохранить сумму длин, пока так
-		}
 		fsWriter.Write([]string{
 			filepath.Base(fs.Path),
 			fmt.Sprintf("%d", fs.Sentences),
-			fmt.Sprintf("%.2f", avgLength),
 			fmt.Sprintf("%.4f", fs.RussianRatio),
 			fmt.Sprintf("%.4f", fs.EnglishRatio),
 			fmt.Sprintf("%.4f", fs.MixedRatio),
@@ -504,7 +487,7 @@ func main() {
 	fmt.Printf("Average length:   %.2f\n", float64(stats.TotalChars)/float64(stats.TotalSentences))
 	fmt.Printf("Min length:       %d\n", stats.Lengths[0])
 	fmt.Printf("Max length:       %d\n", stats.Lengths[len(stats.Lengths)-1])
-	fmt.Printf("Time:             %v\n", elapsed)
+	fmt.Printf("Time:             %v\n", totalTime.Round(time.Second))
 	fmt.Println(strings.Repeat("-", 60))
 	fmt.Printf("Russian only:     %d (%.2f%%)\n", stats.RussianOnly, float64(stats.RussianOnly)/float64(stats.TotalSentences)*100)
 	fmt.Printf("English only:     %d (%.2f%%)\n", stats.EnglishOnly, float64(stats.EnglishOnly)/float64(stats.TotalSentences)*100)
