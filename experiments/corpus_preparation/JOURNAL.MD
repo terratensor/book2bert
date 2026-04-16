@@ -8,16 +8,16 @@ mkdir -p data/analysis
 go run cmd/analyze-corpus/main.go \
     --dir data/processed/sentences_full \
     --workers 32 \
-    --output data/data/analysis
+    --output data/analysis
 ```
 
-### Что мы получим
+## Что мы получим
 Файл	Содержание
 stats_summary.json	Общая статистика, перцентили, языковой состав
 stats_length_histogram.csv	Распределение длин предложений
 stats_per_file.csv	Статистика по каждому файлу
 
-3.1 Сначала сохраним длинные предложения
+### 3.1 Сначала сохраним длинные предложения
 
 ```bash
 # Сохраним все предложения длиннее 1000 символов
@@ -27,7 +27,7 @@ python scripts/save_long_sentences.py \
     --min-length 1000
 ```
 
-3.2 Построим графики
+### 3.2 Построим графики
 
 ```bash
 python scripts/analyze_corpus_stats.py \
@@ -36,7 +36,7 @@ python scripts/analyze_corpus_stats.py \
     --output data/analysis
 ```
 
-4.2 Аномально длинные предложения
+### 4.2 Аномально длинные предложения
 После сохранения long_sentences.jsonl мы сможем посмотреть, что это за монстры:
 
 ```bash
