@@ -377,8 +377,9 @@ func main() {
 		return stats.Lengths[i] < stats.Lengths[j]
 	})
 
+	// Вычисляем перцентили
 	percentiles := []float64{1, 5, 10, 25, 50, 75, 90, 95, 99}
-	percentileValues := make(map[float64]int64)
+	percentileValues := make(map[string]int64) // ← ключи как строки
 	for _, p := range percentiles {
 		idx := int(float64(len(stats.Lengths)) * p / 100)
 		if idx >= len(stats.Lengths) {
@@ -387,7 +388,7 @@ func main() {
 		if idx < 0 {
 			idx = 0
 		}
-		percentileValues[p] = stats.Lengths[idx]
+		percentileValues[fmt.Sprintf("%.0f", p)] = stats.Lengths[idx]
 	}
 
 	// Сохраняем общую статистику в JSON
