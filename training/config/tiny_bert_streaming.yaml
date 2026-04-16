@@ -14,7 +14,7 @@ training:
   gradient_accumulation_steps: 1
   learning_rate: 5.0e-5
   weight_decay: 0.01
-  num_epochs: 5  # начнем с 5 эпох
+  num_epochs: 10  # начнем с 5 эпох
 
 data:
   mlm_probability: 0.15

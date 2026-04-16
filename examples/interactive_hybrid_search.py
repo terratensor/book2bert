@@ -400,8 +400,8 @@ def main():
     """Основная функция интерактивного поиска"""
     
     # Параметры для подключения
-    bert_model_path = "data/models/tiny_bert_militera_v3/best_model.pt"
-    tokenizer_path = "data/processed/tokenizer_militera_v3"
+    bert_model_path = "data/models/tiny_bert_full_15pct/best_model.pt"
+    tokenizer_path = "data/processed/tokenizer_mera_50000"
     manticore_url = "http://localhost:9308/search"
     api_key = ""
     table_name = "library2026"

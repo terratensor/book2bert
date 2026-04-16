@@ -1,0 +1,3 @@
+Original: ЦІ*ТИ Л НЛ11ГІ <+lAl hCI.riiKL  TUI I'1...
+Masked:   ЦІ*ТИ Л [MASK] <+lAl hCI.riiKL TUI I'1
+  Masked word: 'НЛ11ГІ' ✗ → Predictions: ['##І', '*', '<', '^', '##Ъ', '##і', '\\', '##Л']

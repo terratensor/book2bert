@@ -204,11 +204,11 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, 
-                        default="data/models/tiny_bert_militera_v3/best_model.pt")
+                        default="data/models/tiny_bert_full_15pct/checkpoints/last_checkpoint.pt")
     parser.add_argument('--tokenizer_path', type=str,
-                        default="data/processed/tokenizer_militera_v3")
+                        default="data/processed/tokenizer_mera_50000")
     parser.add_argument('--corpus_dir', type=str, 
-                        default="data/processed/sentences_militera_v3")
+                        default="data/processed/sentences_full")
     parser.add_argument('--num_examples', type=int, default=15)
     args = parser.parse_args()
     
