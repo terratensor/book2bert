@@ -73,6 +73,12 @@ type FileStats struct {
 	GarbageRatio float64
 }
 
+type Progress struct {
+	processedFiles int64
+	totalFiles     int64
+	startTime      time.Time
+}
+
 // isRussian проверяет наличие кириллицы
 func isRussian(text string) bool {
 	for _, r := range text {
@@ -159,10 +165,11 @@ func hasGarbagePatterns(text string) (hasISBN, hasUDK, hasBBK, hasURL, hasEmail 
 }
 
 // analyzeFile анализирует один JSONL файл
-func analyzeFile(filePath string, stats *Stats, fileStatsChan chan<- FileStats, wg *sync.WaitGroup, sem chan struct{}) {
+func analyzeFile(filePath string, stats *Stats, fileStatsChan chan<- FileStats, wg *sync.WaitGroup, sem chan struct{}, progress *Progress) {
 	defer wg.Done()
 	sem <- struct{}{}
 	defer func() { <-sem }()
+	defer atomic.AddInt64(&progress.processedFiles, 1)
 
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -329,15 +336,38 @@ func main() {
 		uniqueMap: make(map[[16]byte]bool),
 	}
 
+	progress := &Progress{
+		totalFiles: int64(len(files)),
+		startTime:  time.Now(),
+	}
+
 	fileStatsChan := make(chan FileStats, len(files))
 	sem := make(chan struct{}, *workers)
 	var wg sync.WaitGroup
 
 	start := time.Now()
 
+	// Запускаем горутину для отображения прогресса
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			processed := atomic.LoadInt64(&progress.processedFiles)
+			if processed >= progress.totalFiles {
+				return
+			}
+			elapsed := time.Since(progress.startTime)
+			speed := float64(processed) / elapsed.Seconds()
+			percent := float64(processed) / float64(progress.totalFiles) * 100
+
+			log.Printf("[PROGRESS] %d/%d files processed (%.1f%%), speed: %.1f files/sec, elapsed: %v",
+				processed, progress.totalFiles, percent, speed, elapsed.Round(time.Second))
+		}
+	}()
+
 	for _, f := range files {
 		wg.Add(1)
-		go analyzeFile(f, stats, fileStatsChan, &wg, sem)
+		go analyzeFile(f, stats, fileStatsChan, &wg, sem, progress)
 	}
 
 	go func() {
@@ -350,6 +380,10 @@ func main() {
 	for fs := range fileStatsChan {
 		fileStatsList = append(fileStatsList, fs)
 	}
+
+	totalTime := time.Since(progress.startTime)
+	log.Printf("[PROGRESS] COMPLETE: %d/%d files processed in %v",
+		atomic.LoadInt64(&progress.processedFiles), progress.totalFiles, totalTime.Round(time.Second))
 
 	elapsed := time.Since(start)
 
