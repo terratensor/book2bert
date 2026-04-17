@@ -281,3 +281,13 @@ go run cmd/corpus-builder/main.go \
 2026/04/17 12:38:21 Done! Total sentences: 544588775
 2026/04/17 12:38:21 Corpus saved to: data/processed/corpus_clean.txt
 ```
+
+### Запускаем скрипт для точного расчёта токен-статистики
+
+```bash
+python scripts/calc_token_stats.py \
+    --corpus data/processed/corpus_clean.txt \
+    --tokenizer data/processed/tokenizer_clean \
+    --sample-size 1000000 \
+    --output data/analysis/token_stats.json
+```
