@@ -1,6 +1,6 @@
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
-from our_sentence_transformer_full import OurSentenceTransformer
+from v1.scripts.our_sentence_transformer_full import OurSentenceTransformer
 
 import spacy  # Нам нужен морфологический анализатор
 import os

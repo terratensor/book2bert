@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "training"))
 
 from model import BERT
 from tokenizers import BertWordPieceTokenizer
-from query_expansion import QueryExpander
+from v1.examples.query_expansion import QueryExpander
 
 import torch
 

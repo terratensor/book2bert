@@ -1,7 +1,7 @@
 # scripts/keybert_test_v3_debug.py
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
-from our_sentence_transformer import OurSentenceTransformer
+from v1.scripts.our_sentence_transformer import OurSentenceTransformer
 
 import spacy
 import os

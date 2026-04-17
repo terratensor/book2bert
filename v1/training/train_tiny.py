@@ -27,7 +27,7 @@ from torch.utils.tensorboard import SummaryWriter
 from datasets import load_from_disk
 from tqdm import tqdm
 
-from model import BERT, BERTForMLM, count_parameters
+from v1.training.model import BERT, BERTForMLM, count_parameters
 
 
 def collate_fn(batch):

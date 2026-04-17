@@ -16,7 +16,7 @@ from pathlib import Path
 
 # Добавляем путь к scripts для импорта filter_utils
 sys.path.insert(0, str(Path(__file__).parent))
-from filter_utils import filter_cjk_thai
+from v1.scripts.filter_utils import filter_cjk_thai
 
 def stream_sentences(sentences_dir):
     files = glob(os.path.join(sentences_dir, "*.jsonl"))
