@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -22,12 +24,12 @@ import (
 	"github.com/terratensor/book2bert/v2/pkg/textutils"
 )
 
-// BookMeta метаданные книги (для отдельного файла)
+// BookMeta метаданные книги (отдельный файл)
 type BookMeta struct {
 	BookID     string `json:"book_id"`
-	Title      string `json:"title"`
-	Author     string `json:"author"`
-	Genre      string `json:"genre"`
+	Title      string `json:"title,omitempty"`
+	Author     string `json:"author,omitempty"`
+	Genre      string `json:"genre,omitempty"`
 	SourceFile string `json:"source_file"`
 }
 
@@ -148,6 +150,7 @@ func processFile(
 	filePath string,
 	seg segmenter.Segmenter,
 	repo book.Repository,
+	metaChan chan<- BookMeta,
 	stats *ProcessStats,
 	wg *sync.WaitGroup,
 	sem chan struct{},
@@ -156,7 +159,6 @@ func processFile(
 	sem <- struct{}{}
 	defer func() { <-sem }()
 
-	// Открываем файл
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("[ERROR] open %s: %v", filePath, err)
@@ -165,7 +167,6 @@ func processFile(
 	}
 	defer file.Close()
 
-	// Читаем gzip
 	gzReader, err := gzip.NewReader(file)
 	if err != nil {
 		log.Printf("[ERROR] gzip %s: %v", filePath, err)
@@ -181,31 +182,29 @@ func processFile(
 		return
 	}
 
-	// Конвертируем в UTF-8
 	text, err := textutils.ToUTF8(content)
 	if err != nil {
 		text = string(content)
 	}
 	text = textutils.NormalizeText(text)
 
-	// Извлекаем метаданные
 	genre, author, title := parseFilename(filepath.Base(filePath))
 	if title == "" {
 		title = strings.TrimSuffix(filepath.Base(filePath), ".txt.gz")
 		title = strings.TrimSuffix(title, ".txt")
 	}
 
-	// Создаём книгу
-	b := &book.Book{
-		ID:     uuid.New().String(),
-		Title:  title,
-		Author: author,
-		Genre:  genre,
-		Source: filePath,
-		Text:   text,
+	bookID := uuid.New().String()
+
+	// Отправляем метаданные (omitempty уберёт пустые поля)
+	metaChan <- BookMeta{
+		BookID:     bookID,
+		Title:      title,
+		Author:     author,
+		Genre:      genre,
+		SourceFile: filePath,
 	}
 
-	// Разбиваем на блоки по двойным переносам строк
 	blocks := strings.Split(text, "\n\n")
 	ctx := context.Background()
 
@@ -232,14 +231,11 @@ func processFile(
 		return
 	}
 
-	// Сохраняем предложения
+	// Сохраняем предложения (без метаданных)
 	bookSentences := make([]book.Sentence, len(allSentences))
 	for i, text := range allSentences {
 		bookSentences[i] = book.Sentence{
-			BookID:    b.ID,
-			Title:     b.Title,
-			Author:    b.Author,
-			Genre:     b.Genre,
+			BookID:    bookID,
 			Text:      text,
 			Position:  i,
 			CreatedAt: time.Now(),
@@ -277,22 +273,41 @@ func main() {
 		log.Fatal("--corpus and --output are required")
 	}
 
-	// Создаём выходную директорию
 	if err := os.MkdirAll(*outputDir, 0755); err != nil {
 		log.Fatalf("create output dir: %v", err)
 	}
 
-	// Создаём репозиторий
+	// Файл метаданных
+	metaFile, err := os.Create(filepath.Join(*outputDir, "books_meta.jsonl"))
+	if err != nil {
+		log.Fatalf("create meta file: %v", err)
+	}
+	defer metaFile.Close()
+	metaWriter := bufio.NewWriter(metaFile)
+	defer metaWriter.Flush()
+
+	metaChan := make(chan BookMeta, 100)
+
+	go func() {
+		for meta := range metaChan {
+			data, err := json.Marshal(meta)
+			if err != nil {
+				log.Printf("ERROR marshalling meta: %v", err)
+				continue
+			}
+			metaWriter.Write(data)
+			metaWriter.Write([]byte("\n"))
+		}
+	}()
+
 	repo, err := filerepo.NewJSONLRepository(*outputDir)
 	if err != nil {
 		log.Fatalf("create repository: %v", err)
 	}
 	defer repo.Close()
 
-	// Создаём клиент сегментатора
 	seg := segmenterAdapter.NewHTTPClient(*segmenterURL, 120*time.Second)
 
-	// Собираем файлы
 	files, err := filepath.Glob(filepath.Join(*corpusDir, "*.txt.gz"))
 	if err != nil {
 		log.Fatalf("glob: %v", err)
@@ -305,7 +320,6 @@ func main() {
 
 	start := time.Now()
 
-	// Прогресс
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
@@ -322,10 +336,11 @@ func main() {
 
 	for _, f := range files {
 		wg.Add(1)
-		go processFile(f, seg, repo, stats, &wg, sem)
+		go processFile(f, seg, repo, metaChan, stats, &wg, sem)
 	}
 
 	wg.Wait()
+	close(metaChan)
 
 	elapsed := time.Since(start)
 
