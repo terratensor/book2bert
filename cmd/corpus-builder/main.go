@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"log"
@@ -14,26 +15,43 @@ import (
 	"github.com/terratensor/book2bert/pkg/textutils"
 )
 
-var (
-	sentencesDir = flag.String("sentences", "", "директория с JSONL файлами предложений")
-	outputFile   = flag.String("output", "corpus.txt", "выходной файл корпуса")
-	workers      = flag.Int("workers", 8, "количество воркеров")
-	filterCJK    = flag.Bool("filter-cjk", true, "фильтровать CJK/тайские символы")
-)
-
 type Sentence struct {
 	Text string `json:"text"`
 }
 
-func processFile(filePath string, ch chan<- string, stats *int64) error {
-	file, err := os.Open(filePath)
+func openFile(path string) (*os.File, *gzip.Reader, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if strings.HasSuffix(path, ".gz") {
+		gzReader, err := gzip.NewReader(file)
+		if err != nil {
+			file.Close()
+			return nil, nil, err
+		}
+		return file, gzReader, nil
+	}
+
+	return file, nil, nil
+}
+
+func processFile(filePath string, ch chan<- string, stats *int64, filterCJK bool) error {
+	file, gzReader, err := openFile(filePath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	// Увеличиваем буфер для длинных строк
+	var scanner *bufio.Scanner
+	if gzReader != nil {
+		defer gzReader.Close()
+		scanner = bufio.NewScanner(gzReader)
+	} else {
+		scanner = bufio.NewScanner(file)
+	}
+
 	buf := make([]byte, 1024*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
@@ -43,15 +61,13 @@ func processFile(filePath string, ch chan<- string, stats *int64) error {
 			continue
 		}
 
-		// Быстрый парсинг: ищем "text":" ... "
-		// Но проще использовать json.Unmarshal
 		var s Sentence
 		if err := json.Unmarshal(line, &s); err != nil {
 			continue
 		}
 
 		text := s.Text
-		if *filterCJK {
+		if filterCJK {
 			text = textutils.FilterCJKThai(text)
 		}
 
@@ -65,6 +81,12 @@ func processFile(filePath string, ch chan<- string, stats *int64) error {
 }
 
 func main() {
+	var (
+		sentencesDir = flag.String("sentences", "", "директория с JSONL файлами")
+		outputFile   = flag.String("output", "corpus.txt", "выходной файл корпуса")
+		workers      = flag.Int("workers", 8, "количество воркеров")
+		filterCJK    = flag.Bool("filter-cjk", true, "фильтровать CJK/тайские символы")
+	)
 	flag.Parse()
 
 	if *sentencesDir == "" {
@@ -78,7 +100,10 @@ func main() {
 	log.Printf("Filter CJK: %v", *filterCJK)
 
 	// Находим все JSONL файлы
-	files, err := filepath.Glob(filepath.Join(*sentencesDir, "*.jsonl"))
+	files, err := filepath.Glob(filepath.Join(*sentencesDir, "*.jsonl.gz"))
+	if len(files) == 0 {
+		files, err = filepath.Glob(filepath.Join(*sentencesDir, "*.jsonl"))
+	}
 	if err != nil {
 		log.Fatalf("glob: %v", err)
 	}
@@ -95,7 +120,7 @@ func main() {
 	defer writer.Flush()
 
 	// Канал для строк
-	ch := make(chan string, 10000)
+	ch := make(chan string, 100000)
 	var wg sync.WaitGroup
 	var totalSentences int64
 
@@ -113,7 +138,7 @@ func main() {
 		wg.Add(1)
 		go func(f string) {
 			defer func() { <-sem; wg.Done() }()
-			if err := processFile(f, ch, &totalSentences); err != nil {
+			if err := processFile(f, ch, &totalSentences, *filterCJK); err != nil {
 				log.Printf("ERROR processing %s: %v", f, err)
 			}
 		}(file)

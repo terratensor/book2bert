@@ -234,3 +234,22 @@ python scripts/build_dataset.py \
 ```
 
 **Ожидаемый размер датасета:** ~65-70 GB → ~10-12 GB после сборки (примеры по 512 токенов)
+
+## Запуск сборки корпуса для токенизатора
+```bash
+go run cmd/corpus-builder/main.go \
+    --sentences data/processed/sentences_dedup \
+    --output data/processed/corpus_clean.txt \
+    --workers 32 \
+    --filter-cjk true
+```    
+```bash
+2026/04/17 12:31:50 === Corpus Builder (Go) ===
+2026/04/17 12:31:50 Sentences dir: data/processed/sentences_dedup
+2026/04/17 12:31:50 Output file: data/processed/corpus_clean.txt
+2026/04/17 12:31:50 Workers: 32
+2026/04/17 12:31:50 Filter CJK: true
+2026/04/17 12:31:50 Found 10000 JSONL files
+2026/04/17 12:38:21 Done! Total sentences: 544588775
+2026/04/17 12:38:21 Corpus saved to: data/processed/corpus_clean.txt
+```
