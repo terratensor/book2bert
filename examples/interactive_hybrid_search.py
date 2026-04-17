@@ -63,7 +63,7 @@ class ManticoreHybridSearch:
             'semantic_weight': 0.6,
             'keyword_weight': 0.4,
             'use_expansion': False,
-            'manticore_limit': 100
+            'manticore_limit': 1000
         }
         
     def _load_bert(self, model_path: str, tokenizer_path: str):
@@ -152,7 +152,7 @@ class ManticoreHybridSearch:
     def search_manticore(
         self, 
         query: str, 
-        limit: int = 100,
+        limit: int = 1000,
         offset: int = 0
     ) -> Dict:
         """Поиск в Manticore через ваш API"""

@@ -37,11 +37,12 @@ func (sw *SafeWriter) Close() error {
 
 // FilterStats хранит статистику фильтрации
 type FilterStats struct {
-	TotalFiles     int64
-	TotalSentences int64
-	KeptSentences  int64
-	FilteredOut    map[string]int64
-	mu             sync.Mutex
+	TotalFiles         int64
+	TotalSentences     int64
+	KeptSentences      int64
+	ProcessedSentences int64 // для round-robin распределения
+	FilteredOut        map[string]int64
+	mu                 sync.Mutex
 }
 
 var (
@@ -204,12 +205,17 @@ func ProcessFile(inputPath string, outputWriters []*SafeWriter, stats *FilterSta
 			continue
 		}
 
+		// Увеличиваем общий счётчик предложений
 		atomic.AddInt64(&stats.TotalSentences, 1)
 
 		if isGoodSentence(text, stats) {
-			idx := atomic.AddInt64(&stats.TotalSentences, 1) % int64(len(outputWriters))
+			// Используем отдельный счётчик для round-robin распределения
+			idx := atomic.AddInt64(&stats.ProcessedSentences, 1) % int64(len(outputWriters))
 			writer := outputWriters[idx]
-			dataBytes, _ := json.Marshal(data)
+			dataBytes, err := json.Marshal(data)
+			if err != nil {
+				continue
+			}
 			writer.Write(dataBytes)
 			writer.Write([]byte("\n"))
 			atomic.AddInt64(&stats.KeptSentences, 1)
@@ -223,7 +229,7 @@ func main() {
 	var (
 		inputDir   = flag.String("input", "", "входная директория с JSONL файлами")
 		outputDir  = flag.String("output", "", "выходная директория для отфильтрованных файлов")
-		workers    = flag.Int("workers", 32, "количество воркеров")
+		workers    = flag.Int("workers", 32, "количество параллельных воркеров")
 		numOutputs = flag.Int("num-outputs", 10000, "количество выходных файлов")
 	)
 	flag.Parse()
@@ -298,18 +304,20 @@ func main() {
 
 	elapsed := time.Since(start)
 
+	// Вывод статистики
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("FILTERING COMPLETE")
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Printf("Time:           %v\n", elapsed.Round(time.Second))
 	fmt.Printf("Input files:    %d\n", stats.TotalFiles)
-	fmt.Printf("Total sentences:%d\n", stats.TotalSentences)
-	fmt.Printf("Kept sentences: %d (%.2f%%)\n", stats.KeptSentences, float64(stats.KeptSentences)/float64(stats.TotalSentences)*100)
-	fmt.Printf("Filtered out:   %d (%.2f%%)\n", stats.TotalSentences-stats.KeptSentences, float64(stats.TotalSentences-stats.KeptSentences)/float64(stats.TotalSentences)*100)
+	fmt.Printf("Total sentences: %d\n", stats.TotalSentences)
+	fmt.Printf("Kept sentences:  %d (%.2f%%)\n", stats.KeptSentences, float64(stats.KeptSentences)/float64(stats.TotalSentences)*100)
+	fmt.Printf("Filtered out:    %d (%.2f%%)\n", stats.TotalSentences-stats.KeptSentences, float64(stats.TotalSentences-stats.KeptSentences)/float64(stats.TotalSentences)*100)
 	fmt.Println(strings.Repeat("-", 60))
 	fmt.Println("Filter reasons:")
+	// Сортируем для красивого вывода
 	for name, count := range stats.FilteredOut {
-		fmt.Printf("  %s: %d (%.2f%%)\n", name, count, float64(count)/float64(stats.TotalSentences)*100)
+		fmt.Printf("  %-15s: %d (%.2f%%)\n", name, count, float64(count)/float64(stats.TotalSentences)*100)
 	}
 	fmt.Println(strings.Repeat("=", 60))
 }
