@@ -1,4 +1,4 @@
-module github.com/terratensor/book2bert
+module github.com/terratensor/book2bert/v1
 
 go 1.25.2
 

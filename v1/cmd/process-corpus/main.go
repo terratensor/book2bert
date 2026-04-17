@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/terratensor/book2bert/pkg/adapters/filerepo"
-	segmenterAdapter "github.com/terratensor/book2bert/pkg/adapters/segmenter"
-	"github.com/terratensor/book2bert/pkg/app"
-	"github.com/terratensor/book2bert/pkg/core/book"
-	"github.com/terratensor/book2bert/pkg/core/segmenter"
-	"github.com/terratensor/book2bert/pkg/textutils"
+	"github.com/terratensor/book2bert/v1/pkg/adapters/filerepo"
+	segmenterAdapter "github.com/terratensor/book2bert/v1/pkg/adapters/segmenter"
+	"github.com/terratensor/book2bert/v1/pkg/app"
+	"github.com/terratensor/book2bert/v1/pkg/core/book"
+	"github.com/terratensor/book2bert/v1/pkg/core/segmenter"
+	"github.com/terratensor/book2bert/v1/pkg/textutils"
 )
 
 var (
